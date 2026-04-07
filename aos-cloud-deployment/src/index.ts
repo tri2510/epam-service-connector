@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Eclipse Foundation.
+// 
+// This program and the accompanying materials are made available under the
+// terms of the MIT License which is available at
+// https://opensource.org/licenses/MIT.
+//
+// SPDX-License-Identifier: MIT
+
+import * as ReactDOM from 'react-dom/client'
+import * as React from 'react'
+import Page from './components/Page'
+
+export const components = { Page }
+
+export function mount(el: HTMLElement, props?: any) {
+  const root = ReactDOM.createRoot(el)
+  root.render(React.createElement(Page as any, props || {}))
+  ;(el as any).__aw_root = root
+}
+
+export function unmount(el: HTMLElement) {
+  const r = (el as any).__aw_root
+  if (r && r.unmount) r.unmount()
+  delete (el as any).__aw_root
+}
+
+// Register plugin globally for digital.auto
+// NOTE: PluginPageRender expects the key to be 'page-plugin'
+if (typeof window !== 'undefined') {
+  ;(window as any).DAPlugins = (window as any).DAPlugins || {}
+  ;(window as any).DAPlugins['page-plugin'] = { components, mount, unmount }
+  console.log('AOS Cloud Deployment plugin registered as page-plugin')
+}
