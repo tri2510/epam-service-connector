@@ -2,6 +2,13 @@
 
 Local setup for testing vehicle signal apps against [Eclipse KUKSA Databroker](https://github.com/eclipse-kuksa/kuksa-databroker) before deploying to AosEdge.
 
+Two modes are available:
+
+| Mode | Script | What it runs | Best for |
+|------|--------|-------------|----------|
+| **Standalone** | `start-kuksa.sh` | KUKSA Databroker + Bridge + Feeder | Minimal setup, custom signal simulation |
+| **SDV Runtime** | `start-sdv-runtime.sh` | [eclipse-autowrx/sdv-runtime](https://github.com/eclipse-autowrx/sdv-runtime) + Bridge | Full SDV stack with playground.digital.auto integration |
+
 ## Architecture
 
 ```
@@ -13,32 +20,64 @@ REST Bridge (bridge.py)
     │
     │  gRPC (port 55555)
     ▼
-KUKSA Databroker (Docker)
-    ▲
-    │  gRPC
-Signal Feeder (feeder.py)
+┌──────────────────────────────────────────────┐
+│  Mode A: KUKSA Databroker (standalone)       │
+│  OR                                          │
+│  Mode B: SDV Runtime (all-in-one)            │
+│    KUKSA Databroker + VSS 4.0 + Mock Provider│
+│    + Kit Manager + Velocitas SDK             │
+│    + playground.digital.auto connection      │
+└──────────────────────────────────────────────┘
 ```
 
 The **REST Bridge** translates simple HTTP GET/POST requests into KUKSA gRPC calls, so the C++ app can read vehicle signals without linking gRPC or protobuf libraries.
 
-## Quick Start
+## Quick Start — Standalone Mode
 
 ```bash
-# Start everything (databroker + bridge + feeder)
+# Start KUKSA Databroker + Bridge + Signal Feeder
 ./start-kuksa.sh
 
-# Test — should return Vehicle.Speed value
+# Test
 curl http://localhost:8888/api/v1/signals/Vehicle.Speed
 
 # Stop
 ./stop-kuksa.sh
 ```
 
+## Quick Start — SDV Runtime Mode
+
+Uses the [eclipse-autowrx/sdv-runtime](https://github.com/eclipse-autowrx/sdv-runtime) all-in-one container which includes KUKSA Databroker 0.4.4, VSS 4.0, Mock Provider, Kit Manager, and connects to [playground.digital.auto](https://playground.digital.auto) automatically.
+
+```bash
+# Start SDV Runtime + Bridge (provide a runtime name for playground)
+./start-sdv-runtime.sh MyRuntimeName
+
+# Test
+curl http://localhost:8888/api/v1/signals/Vehicle.Speed
+
+# Stop
+./stop-sdv-runtime.sh
+```
+
+After starting, your runtime appears on [playground.digital.auto](https://playground.digital.auto) as `MyRuntimeName`, where you can interact with vehicle signals from the browser.
+
+### SDV Runtime Components
+
+| Component | Version |
+|-----------|---------|
+| KUKSA Databroker | 0.4.4 |
+| Vehicle Signal Specification | 4.0 |
+| Kuksa Mock Provider | Built-in (auto-feeds signals) |
+| Kit Manager | Built-in |
+| Velocitas Python SDK | 0.14.1 |
+| Python | 3.10 |
+
 ## Prerequisites
 
-- Docker (for KUKSA Databroker container)
+- Docker (for KUKSA Databroker or SDV Runtime container)
 - Python 3 with pip (for bridge and feeder)
-- `kuksa-client` pip package (installed automatically by `start-kuksa.sh`)
+- `kuksa-client` pip package (installed automatically by start scripts)
 
 ## REST Bridge API
 
