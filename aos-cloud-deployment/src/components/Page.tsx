@@ -590,11 +590,14 @@ export default function Page({ data, config }: PluginProps) {
   const fetchDockerInstances = async () => {
     try {
       // Try to fetch from Kit Manager API
-      const response = await fetch('http://localhost:3090/listAllKits')
+      const kitManagerUrl = config?.aosServiceUrl || config?.runtimeUrl || 'https://kit.digitalauto.tech'
+      const listUrl = kitManagerUrl.replace(/\/$/, '') + '/listAllKits'
+      const response = await fetch(listUrl)
       if (response.ok) {
         const data = await response.json()
-        if (data.kits && Array.isArray(data.kits)) {
-          const instances: DockerInstance[] = data.kits
+        const kitsList = data.kits || data.content || []
+        if (Array.isArray(kitsList)) {
+          const instances: DockerInstance[] = kitsList
             .filter((kit: any) => {
               // Filter for AOS Edge Toolchain instances (AET- prefix) or all instances
               const instanceId = kit.kit_id || kit.instance_id || ''

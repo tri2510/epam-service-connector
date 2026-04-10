@@ -384,12 +384,12 @@ configuration:
     requestedResources:
         cpu: 2000
         ram: 50MB
-        storage: 20MB
+        storage: 25MB
         state: 512KB
     quotas:
         cpu: 2000
         mem: 50MB
         state: 512KB
-        storage: 20MB`
+        storage: 25MB`
   }
 }

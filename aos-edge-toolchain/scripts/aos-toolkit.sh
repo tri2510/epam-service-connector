@@ -96,6 +96,10 @@ build() {
     local input="${1:-/workspace/src/main.cpp}"
     local output="${2:-/workspace/output/app}"
 
+    # Resolve to absolute paths before any cd
+    [[ "$input" != /* ]] && input="$(pwd)/$input"
+    [[ "$output" != /* ]] && output="$(pwd)/$output"
+
     mkdir -p "$(dirname "$output")"
 
     # Case 1: Input is a directory
