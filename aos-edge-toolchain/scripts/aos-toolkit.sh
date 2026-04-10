@@ -107,12 +107,28 @@ build() {
             log_info "Found CMakeLists.txt, using CMake..."
             mkdir -p /workspace/build
             cd /workspace/build
-            cmake -DCMAKE_BUILD_TYPE=Release \
-                  -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
-                  -DCMAKE_CXX_FLAGS="-static -std=c++17 -O2" \
-                  "$input"
+
+            # If conanfile.txt exists, use Conan for dependency management
+            if [ -f "$input/conanfile.txt" ] || [ -f "$input/conanfile.py" ]; then
+                log_info "Found Conan file, installing dependencies for aarch64..."
+                conan install "$input" \
+                    --profile:host aarch64-linux-gnu \
+                    --profile:build default \
+                    --build=missing \
+                    --output-folder /workspace/build 2>&1 || true
+                cmake -DCMAKE_BUILD_TYPE=Release \
+                      -DCMAKE_TOOLCHAIN_FILE=/workspace/build/conan_toolchain.cmake \
+                      "$input"
+            else
+                cmake -DCMAKE_BUILD_TYPE=Release \
+                      -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+                      -DCMAKE_CXX_FLAGS="-static -std=c++17 -O2" \
+                      "$input"
+            fi
+
             cmake --build . --config Release -j$(nproc)
-            find . -maxdepth 1 -type f -executable -exec cp {} "$output" \;
+            find . -maxdepth 2 -type f -executable ! -name "*.sh" -exec cp {} "$output" \; 2>/dev/null || \
+            find . -name "kuksa-vehicle-app*" -type f -executable -exec cp {} "$output" \; 2>/dev/null
             log_info "Built: $output"
             file "$output"
             ls -lh "$output"

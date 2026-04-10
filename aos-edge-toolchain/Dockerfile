@@ -14,7 +14,7 @@ ARG http_proxy
 ARG https_proxy
 ARG no_proxy
 
-# Install build tools + ARM64 cross-compiler + Python + Node.js
+# Install build tools + ARM64 cross-compiler + Python + Node.js + gRPC deps
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
@@ -31,6 +31,8 @@ RUN apt-get update && apt-get install -y \
     openssl \
     nodejs \
     npm \
+    autoconf automake libtool pkg-config \
+    protobuf-compiler libprotobuf-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install socket.io-client + proxy agent for Socket.IO through corporate proxy
@@ -40,11 +42,28 @@ RUN npm install --global --prefix=/usr/local socket.io-client https-proxy-agent
 RUN ln -sf /usr/bin/aarch64-linux-gnu-g++ /usr/local/bin/aarch64-linux-gnu-g++ && \
     ln -sf /usr/bin/aarch64-linux-gnu-gcc /usr/local/bin/aarch64-linux-gnu-gcc
 
-# Install aos-signer + Azure SDK for Key Vault cert retrieval
+# Install Conan 2 + aos-signer + Azure SDK
 RUN pip3 install --break-system-packages \
+    "conan>=2.0" \
     aos-signer \
     azure-identity \
     azure-keyvault-secrets
+
+# Setup Conan default profile and aarch64 cross-compile profile
+RUN conan profile detect --force
+COPY conan-profiles/ /root/.conan2/profiles/
+
+# Cross-compile gRPC + protobuf + abseil for aarch64 (cached in image)
+COPY conanfile-grpc.txt /tmp/conanfile-grpc.txt
+RUN cd /tmp && conan install conanfile-grpc.txt \
+    --profile:host aarch64-linux-gnu \
+    --profile:build default \
+    --build=missing \
+    --output-folder /opt/grpc-aarch64 \
+    || echo "gRPC cross-compile will be done on first build if this fails"
+
+# Copy KUKSA proto files for code generation
+COPY proto/ /usr/local/share/kuksa-proto/
 
 # Copy scripts (aos-toolkit.sh, broadcaster.js, init-certs.py and other tools)
 COPY scripts/ /usr/local/bin/

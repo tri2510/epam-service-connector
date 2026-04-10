@@ -246,11 +246,73 @@ async function handleBuildDeploy(data) {
       console.warn('[Build] Could not copy certificate:', err.message);
     }
 
+    // Detect gRPC project: if code includes grpcpp, set up CMake + Conan build
+    const isGrpcProject = cppCode.includes('grpcpp') || cppCode.includes('grpc.pb.h');
+    let buildCmd;
+
+    if (isGrpcProject) {
+      console.log('[Build] Detected gRPC project, setting up CMake + Conan build...');
+      const projectDir = path.join(workspaceDir, 'project');
+      await fs.mkdir(path.join(projectDir, 'src'), { recursive: true });
+      await fs.writeFile(path.join(projectDir, 'src/main.cpp'), cppCode);
+
+      // Write CMakeLists.txt for gRPC KUKSA project
+      const cmakeContent = `cmake_minimum_required(VERSION 3.16)
+project(${appName} CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+find_package(protobuf REQUIRED)
+find_package(gRPC REQUIRED)
+
+set(PROTO_DIR "/usr/local/share/kuksa-proto")
+set(PROTO_GEN_DIR "\${CMAKE_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY \${PROTO_GEN_DIR})
+
+find_program(PROTOC protoc REQUIRED)
+find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
+
+foreach(proto_name types val)
+  add_custom_command(
+    OUTPUT \${PROTO_GEN_DIR}/kuksa/val/v1/\${proto_name}.pb.cc
+           \${PROTO_GEN_DIR}/kuksa/val/v1/\${proto_name}.pb.h
+           \${PROTO_GEN_DIR}/kuksa/val/v1/\${proto_name}.grpc.pb.cc
+           \${PROTO_GEN_DIR}/kuksa/val/v1/\${proto_name}.grpc.pb.h
+    COMMAND \${PROTOC}
+      --proto_path=\${PROTO_DIR}
+      --cpp_out=\${PROTO_GEN_DIR}
+      --grpc_out=\${PROTO_GEN_DIR}
+      --plugin=protoc-gen-grpc=\${GRPC_CPP_PLUGIN}
+      \${PROTO_DIR}/kuksa/val/v1/\${proto_name}.proto
+    COMMENT "Generating C++ for \${proto_name}.proto"
+  )
+endforeach()
+
+add_executable(${appName}
+  src/main.cpp
+  \${PROTO_GEN_DIR}/kuksa/val/v1/types.pb.cc
+  \${PROTO_GEN_DIR}/kuksa/val/v1/types.grpc.pb.cc
+  \${PROTO_GEN_DIR}/kuksa/val/v1/val.pb.cc
+  \${PROTO_GEN_DIR}/kuksa/val/v1/val.grpc.pb.cc
+)
+target_include_directories(${appName} PRIVATE \${PROTO_GEN_DIR})
+target_link_libraries(${appName} gRPC::grpc++ protobuf::libprotobuf)
+`;
+      await fs.writeFile(path.join(projectDir, 'CMakeLists.txt'), cmakeContent);
+
+      const conanContent = `[requires]\ngrpc/1.54.3\nprotobuf/3.21.12\n\n[generators]\nCMakeDeps\nCMakeToolchain\n`;
+      await fs.writeFile(path.join(projectDir, 'conanfile.txt'), conanContent);
+
+      console.log('[Build] Wrote CMakeLists.txt + conanfile.txt');
+      buildCmd = `/usr/local/bin/aos-toolkit.sh build project/ ${appName}`;
+    } else {
+      buildCmd = `/usr/local/bin/aos-toolkit.sh build src/main.cpp ${appName}`;
+    }
+
     console.log('[Build] Running build command...');
-    const buildCmd = `/usr/local/bin/aos-toolkit.sh build src/main.cpp ${appName}`;
     const { stdout: buildOut, stderr: buildErr } = await execAsync(buildCmd, {
       cwd: workspaceDir,
-      env: { ...process.env }
+      env: { ...process.env },
+      timeout: 600000
     });
 
     console.log('[Build] Build output:', buildOut.slice(-200));
