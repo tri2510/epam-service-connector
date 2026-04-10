@@ -425,7 +425,8 @@ docker run -d --network host \
   -e http_proxy=http://127.0.0.1:3128 \
   -e INSTANCE_ID=AET-TOOLCHAIN-001 \
   --name aos-broadcaster \
-  aos-edge-toolchain
+  --entrypoint "node" \
+  aos-edge-toolchain:proxy /usr/local/bin/aos-broadcaster.js
 ```
 
 ### What is proxy-aware
@@ -473,4 +474,4 @@ docker build -t aos-edge-toolchain .
 
 ## License
 
-Internal use only.
+MIT — see [LICENSE](LICENSE).

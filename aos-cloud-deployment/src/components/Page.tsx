@@ -924,8 +924,8 @@ export default function Page({ data, config }: PluginProps) {
     if (preset) {
       setCppCode(preset.cpp)
       setYamlConfig(preset.yaml)
-      setAppName(presetName)
-      addLog(`[Preset] Loaded: ${presetName}`)
+      setAppName(preset.appName || presetName)
+      addLog(`[Preset] Loaded: ${preset.name || presetName}`)
     }
   }
 
@@ -1079,7 +1079,8 @@ export default function Page({ data, config }: PluginProps) {
           style: styles.select
         },
           React.createElement('option', { value: 'custom' }, 'Custom'),
-          React.createElement('option', { value: 'helloAos' }, 'Hello AOS Example')
+          React.createElement('option', { value: 'helloAos' }, 'Hello AOS'),
+          React.createElement('option', { value: 'kuksaVehicleApp' }, 'KUKSA Vehicle App')
         ),
         React.createElement('input', {
           type: 'text',

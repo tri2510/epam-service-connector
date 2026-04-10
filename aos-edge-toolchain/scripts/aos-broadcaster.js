@@ -264,6 +264,13 @@ async function handleBuildDeploy(data) {
       console.warn('[Build] Binary copy warning:', err.message);
     }
 
+    // Remove source file from src/ — aos-signer packages everything in src/
+    // and the device bridge plugin only expects the binary
+    try {
+      await fs.unlink(path.join(workspaceDir, 'src/main.cpp'));
+      console.log('[Build] Removed main.cpp from src/ (only binary should be packaged)');
+    } catch (err) { /* ignore if already gone */ }
+
     console.log('[Build] Running sign command...');
     const signCmd = '/usr/local/bin/aos-toolkit.sh sign';
     const { stdout: signOut, stderr: signErr } = await execAsync(signCmd, {
