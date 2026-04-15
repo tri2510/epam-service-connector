@@ -43,8 +43,16 @@ def error(msg):
 def generate_pem(p12_path, pem_path):
     """Convert .p12 to .pem using openssl."""
     try:
+        p12_password = os.environ.get("CERT_PASSWORD", "")
         result = subprocess.run(
-            ["openssl", "pkcs12", "-in", p12_path, "-out", pem_path, "-nodes"],
+            [
+                "openssl", "pkcs12",
+                "-in", p12_path,
+                "-out", pem_path,
+                "-nodes",
+                "-passin", f"pass:{p12_password}",
+            ],
+            input=b"",
             capture_output=True,
             timeout=10,
         )
