@@ -62,6 +62,10 @@ export default function Page({ data, config }: PluginProps) {
   const [alerts, setAlerts] = React.useState<any[]>([])
   const [isLoadingAosCloud, setIsLoadingAosCloud] = React.useState<boolean>(false)
   const [showGuide, setShowGuide] = React.useState<boolean>(false)
+  const [serviceLogs, setServiceLogs] = React.useState<any[]>([])
+  const [isRequestingLog, setIsRequestingLog] = React.useState<boolean>(false)
+  const [selectedUnitUid, setSelectedUnitUid] = React.useState<string>('')
+  const [selectedSubjectId, setSelectedSubjectId] = React.useState<string>('')
   const aosCloudLoadedRef = React.useRef<boolean>(false)
 
   const aosServiceRef = React.useRef<AosService | null>(null)
@@ -770,8 +774,18 @@ export default function Page({ data, config }: PluginProps) {
         if (unitsRes.units?.length) {
           const firstUid = unitsRes.units[0].uid
           setSelectedMonitorUnit(firstUid)
+          setSelectedUnitUid(firstUid)
           loadUnitMonitoring(firstUid)
         }
+      }
+      // Auto-set subject ID from the first available subject
+      if (!selectedSubjectId && aosServiceRef.current) {
+        try {
+          const subRes = await aosServiceRef.current.listSubjects()
+          if (subRes.status === 'success' && subRes.items?.length) {
+            setSelectedSubjectId(subRes.items[0].id)
+          }
+        } catch (e) { /* subjects are optional */ }
       }
     } catch (err: any) {
       addLog(`[AosCloud] Failed to load service details: ${err.message}`)
@@ -1083,7 +1097,8 @@ export default function Page({ data, config }: PluginProps) {
         },
           React.createElement('option', { value: 'custom' }, 'Custom'),
           React.createElement('option', { value: 'helloAos' }, 'Hello AOS'),
-          React.createElement('option', { value: 'kuksaGrpcApp' }, 'KUKSA gRPC App (Direct)')
+          React.createElement('option', { value: 'kuksaWriter' }, 'KUKSA Writer'),
+          React.createElement('option', { value: 'kuksaReader' }, 'KUKSA Reader')
         ),
         React.createElement('input', {
           type: 'text',
@@ -1577,6 +1592,58 @@ export default function Page({ data, config }: PluginProps) {
                     key: i,
                     style: styles.logEntry
                   }, log)
+                )
+          )
+        ),
+
+        // Service Logs Card (from AosCloud)
+        React.createElement('div', { style: { ...styles.card, ...styles.logsCard } },
+          React.createElement('div', { style: styles.cardHeader },
+            React.createElement('div', { style: styles.cardTitle },
+              React.createElement('span', { style: styles.cardIcon }, '📡'),
+              'Service Logs'
+            ),
+            React.createElement('div', { style: { display: 'flex', gap: '4px' } },
+              React.createElement('button', {
+                onClick: requestServiceLog,
+                disabled: isRequestingLog || !selectedServiceUuid || !selectedMonitorUnit,
+                style: {
+                  ...styles.button, ...styles.buttonSm,
+                  ...(isRequestingLog || !selectedServiceUuid || !selectedMonitorUnit ? styles.buttonDisabled : {})
+                },
+                title: 'Request service logs from AosCloud (last 60 min)'
+              }, isRequestingLog ? '⟳ Requesting...' : '📥 Fetch Logs'),
+              React.createElement('button', {
+                onClick: () => setServiceLogs([]),
+                style: styles.iconButton,
+                title: 'Clear'
+              }, '✕')
+            )
+          ),
+          React.createElement('div', { style: styles.logs },
+            serviceLogs.length === 0
+              ? React.createElement('div', { style: styles.empty },
+                  selectedServiceUuid
+                    ? 'Click "Fetch Logs" to request service logs from the unit'
+                    : 'Select a service first'
+                )
+              : serviceLogs.map((log: any, i: number) =>
+                  React.createElement('div', {
+                    key: log.id || i,
+                    style: styles.logEntry
+                  },
+                    React.createElement('span', {
+                      style: {
+                        color: log.state === 'ok' ? '#16a34a' : log.state === 'error' ? '#dc2626' : '#d97706',
+                        marginRight: '6px',
+                        fontSize: '10px'
+                      }
+                    }, `[${log.state || 'pending'}]`),
+                    React.createElement('span', null,
+                      `${log.serviceTitle || log.service || ''} | ${log.dateFrom ? new Date(log.dateFrom).toLocaleTimeString() : ''} - ${log.dateTill ? new Date(log.dateTill).toLocaleTimeString() : ''}`
+                    ),
+                    log.error && React.createElement('span', { style: { color: '#dc2626', marginLeft: '6px' } }, log.error)
+                  )
                 )
           )
         ),
