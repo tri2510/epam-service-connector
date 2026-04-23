@@ -1,198 +1,203 @@
 # AOS Cloud Deployment Plugin
 
-Web UI for building and deploying AOS (Autonomous Operating System) C++ applications to edge devices.
+Web UI for building and deploying C++ applications to AOS edge devices via
+[Eclipse AosEdge](https://docs.aosedge.tech).
 
 Runs in two modes:
-- **Plugin mode** — embedded inside the [digital.auto](https://digitalauto.tech) platform
-- **Standalone mode** — runs independently in any browser for local testing
+- **Standalone** — runs in any browser for local development
+- **Plugin** — embedded inside the [digital.auto](https://digitalauto.tech) platform
 
----
+## End-to-End Quick Start
 
-## Quick Start (Standalone)
+This gets you from zero to a deployed service on an AosEdge VM.
+
+### Prerequisites
+
+- Docker installed
+- AosEdge VM running, provisioned, and online on AosCloud
+  (see [docs/AOSEDGE-VM-SETUP.md](../docs/AOSEDGE-VM-SETUP.md))
+- SP certificate at `~/.aos/security/aos-user-sp.p12`
+- AosCloud setup: service created, subject with service assigned to unit,
+  unit in a validation unit-set
+
+### 1. Build the Docker image
 
 ```bash
-# 1. Install dependencies
-npm install
-
-# 2. Build and open in browser
-npm run standalone
-# then open standalone.html in your browser
-
-# Or use the dev server (auto-rebuild on changes)
-npm run standalone:dev
-# open http://localhost:3011/standalone.html
+cd aos-edge-toolchain
+docker build -t aos-edge-toolchain:latest .
 ```
 
----
-
-## Quick Start (Docker Toolchain)
-
-The plugin talks to the AOS Edge Toolchain Docker container via Kit Manager.
-Start the broadcaster so the UI can discover and send build commands to it.
+### 2. Start the broadcaster
 
 ```bash
-# 1. Copy and edit the env file in the toolchain directory
-cp ../aos-edge-toolchain/.env.example ../aos-edge-toolchain/.env
-
-# 2. Start the broadcaster
 docker run -d --network host \
-  --env-file ../aos-edge-toolchain/.env \
+  -e INSTANCE_ID=AET-TOOLCHAIN-001 \
+  -e INSTANCE_NAME="AOS Edge Toolchain" \
+  -e KIT_MANAGER_URL=https://kit.digitalauto.tech \
+  -e CERT_FILE=/certs/aos-user-sp.p12 \
+  -e AOSCLOUD_URL=https://aoscloud.io:10000 \
   -v ~/.aos/security/aos-user-sp.p12:/certs/aos-user-sp.p12:ro \
   --name aos-broadcaster \
   --entrypoint "node" \
-  aos-edge-toolchain:proxy /usr/local/bin/aos-broadcaster.js
-
-# 3. View logs
-docker logs -f aos-broadcaster
+  aos-edge-toolchain:latest /usr/local/bin/aos-broadcaster.js
 ```
 
-Or without `--env-file` (build-only, no certificate):
+Verify it connects:
 
 ```bash
-docker run -d --network host \
-  -e NODE_TLS_REJECT_UNAUTHORIZED=0 \
-  -e INSTANCE_ID=AET-TOOLCHAIN-001 \
-  --name aos-broadcaster \
-  --entrypoint "node" \
-  aos-edge-toolchain:proxy /usr/local/bin/aos-broadcaster.js
+docker logs aos-broadcaster
+# Should show: [Broadcaster] Connected to Kit Manager
 ```
+
+### 3. Build and serve the standalone UI
+
+```bash
+cd aos-cloud-deployment
+npm install
+npm run standalone
+python3 -m http.server 3011
+```
+
+### 4. Open and deploy
+
+1. Open **http://localhost:3011/standalone.html**
+2. Select **AET-TOOLCHAIN-001** from Docker Instances
+3. Pick a preset: **Hello AOS** or **KUKSA gRPC App**
+4. Click **Build & Deploy**
+
+The toolchain compiles for the target architecture (auto-detected from
+`config.yaml`), signs with your SP certificate, uploads to AosCloud, and the
+VM automatically pulls and runs the new version.
+
+### 5. Verify on the VM
+
+```bash
+sshpass -p 'Password1' ssh -p <SSH_PORT> root@localhost \
+  "journalctl -f | grep crun"
+```
+
+---
+
+## How It Works
+
+```
+Browser (standalone.html)
+   │  Socket.IO
+   ▼
+Kit Manager (kit.digitalauto.tech)
+   │  Socket.IO
+   ▼
+aos-broadcaster.js (Docker container)
+   ├── Detects target arch from config.yaml (x86_64 / aarch64)
+   ├── Compiles C++ with g++ or aarch64-linux-gnu-g++
+   ├── For gRPC apps: generates proto stubs, bundles shared libs + ld-linux
+   ├── Signs with aos-signer (uses SP certificate)
+   └── Uploads to AosCloud
+          │  AMQP
+          ▼
+       AosEdge VM (crun container)
+```
+
+### Architecture auto-detection
+
+The broadcaster reads the `arch` field from `config.yaml`:
+
+| `arch` value | Compiler used | Notes |
+|---|---|---|
+| `x86_64` or `amd64` | Native `g++` | For AosEdge VMs |
+| `aarch64` or `arm64` | `aarch64-linux-gnu-g++` | For RPi5 / ARM devices |
+| _(not set)_ | Matches host architecture | |
+
+### Dynamic library bundling
+
+gRPC apps can't be statically linked easily. When the broadcaster detects a
+dynamically linked binary, it automatically:
+
+1. Copies all shared libraries (`ldd` output) into `src/libs/`
+2. Copies the dynamic linker (`ld-linux-x86-64.so.2`) into `src/libs/`
+3. Creates a wrapper script that invokes the bundled `ld-linux` with
+   `--library-path`, making the binary fully self-contained
+4. Packages everything into the service archive
+
+This is required because AosCore runs services inside `crun` containers with
+a minimal rootfs that has no shared libraries.
+
+---
+
+## Presets
+
+| Preset | Description |
+|---|---|
+| **Hello AOS** | Simple static C++ app that prints a message every 10s |
+| **KUKSA gRPC App** | Reads vehicle signals via gRPC from KUKSA Databroker (port 55555). Uses `Server:55555` as default target — AosCore maps the `kuksa` resource hostname |
 
 ---
 
 ## Certificate Setup
 
-A `.p12` certificate is required for signing, uploading, and AosCloud API calls.
-Three ways to provide it, checked in this order:
+A `.p12` SP certificate is required for signing and uploading services.
 
-| Method | When to use |
-|--------|------------|
-| `CERT_FILE` env var | You have a local `.p12` file |
-| UI upload | Quick testing from the browser |
-| `AZURE_KEY_VAULT_NAME` env var | Production with Azure Managed Identity |
-
-### Option 1: Local file (CERT_FILE)
-
-Mount the file into the container and set `CERT_FILE`:
-
-```bash
-docker run -d --network host \
-  -e CERT_FILE=/certs/aos-user-sp.p12 \
-  -v /path/to/aos-user-sp.p12:/certs/aos-user-sp.p12:ro \
-  -e INSTANCE_ID=AET-TOOLCHAIN-001 \
-  --name aos-broadcaster \
-  --entrypoint "node" \
-  aos-edge-toolchain:proxy /usr/local/bin/aos-broadcaster.js
-```
-
-### Option 2: Upload from UI
-
-1. Open the standalone UI or plugin
-2. Find the **Certificate** panel in the left column
-3. Click **Upload .p12 file** and select your certificate
-4. Status indicator turns green when loaded
-
-### Option 3: Azure Key Vault (production)
-
-```bash
-docker run -d --network host \
-  -e AZURE_KEY_VAULT_NAME=my-vault-name \
-  -e INSTANCE_ID=AET-TOOLCHAIN-001 \
-  --name aos-broadcaster \
-  --entrypoint "node" \
-  aos-edge-toolchain:proxy /usr/local/bin/aos-broadcaster.js
-```
-
-Requires Azure Managed Identity with Key Vault Secrets User role.
-
----
-
-## npm Scripts
-
-| Script | Command | Description |
-|--------|---------|-------------|
-| `build` | `npm run build` | Build the plugin for digital.auto (`index.js`, React external) |
-| `dev` | `npm run dev` | Watch mode plugin build |
-| `standalone` | `npm run standalone` | Build standalone version (`standalone.js`, React bundled) |
-| `standalone:dev` | `npm run standalone:dev` | Dev server with watch at `http://localhost:3011` |
-
-### Plugin vs Standalone builds
-
-| | Plugin (`build`) | Standalone (`standalone`) |
-|---|---|---|
-| Entry | `src/index.ts` | `src/standalone.ts` |
-| Output | `index.js` (155 KB) | `standalone.js` (1.2 MB) |
-| React | External (host provides) | Bundled |
-| Usage | Loaded by digital.auto | Open `standalone.html` in browser |
-
----
-
-## Architecture
-
-```
-Browser (Plugin or Standalone)
-   │
-   │  Socket.IO
-   ▼
-Kit Manager (kit.digitalauto.tech)
-   │
-   │  Socket.IO
-   ▼
-AOS Edge Toolchain (Docker)
-   │  aos-broadcaster.js
-   │  aos-toolkit.sh (build/sign/upload)
-   │
-   │  REST + TLS client cert
-   ▼
-AosCloud (aoscloud.io:10000)
-   │
-   ▼
-Edge Unit (RPi5 / VM)
-```
-
----
-
-## UI Panels
-
-| Panel | Location | Description |
-|-------|----------|-------------|
-| **Docker Instances** | Left | Lists AET-* toolchain instances, online/offline filter |
-| **AosCloud Deployment Status** | Left | Service version, unit status from AosCloud API |
-| **Certificate** | Left | Upload/check signing certificate status |
-| **main.cpp** | Center | C++ source code editor |
-| **config.yaml** | Center | Service manifest editor |
-| **Build & Deploy** | Center | One-click build + sign + upload |
-| **Build Status** | Right | Current build progress |
-| **Deployed Apps** | Right | List of deployed apps with start/stop |
-| **Build Logs** | Right | Timestamped log output |
+| Method | How |
+|---|---|
+| **Local file** | Mount with `-v` and set `CERT_FILE` (recommended) |
+| **UI upload** | Use the Certificate panel in the standalone UI |
+| **Azure Key Vault** | Set `AZURE_KEY_VAULT_NAME` env var |
 
 ---
 
 ## Docker Environment Variables
 
-### Broadcaster
-
 | Variable | Default | Description |
-|----------|---------|-------------|
-| `INSTANCE_ID` | Auto-generated | Unique instance ID (e.g. `AET-TOOLCHAIN-001`) |
-| `INSTANCE_NAME` | `AOS Edge Toolchain` | Display name shown in UI |
+|---|---|---|
+| `INSTANCE_ID` | Auto-generated | Instance ID shown in the UI (e.g. `AET-TOOLCHAIN-001`) |
+| `INSTANCE_NAME` | `AOS Edge Toolchain` | Display name |
 | `KIT_MANAGER_URL` | `https://kit.digitalauto.tech` | Kit Manager WebSocket URL |
-| `BROADCAST_INTERVAL` | `30000` | Status heartbeat interval (ms) |
-
-### Certificate
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CERT_FILE` | _(unset)_ | Path to a mounted `.p12` file |
+| `BROADCAST_INTERVAL` | `30000` | Heartbeat interval (ms) |
+| `CERT_FILE` | _(unset)_ | Path to mounted `.p12` certificate |
+| `AOSCLOUD_URL` | `https://aoscloud.io:10000` | AosCloud API URL |
 | `AZURE_KEY_VAULT_NAME` | _(unset)_ | Azure Key Vault name (production) |
-| `CERT_NAME` | `aos-user-sp` | Certificate name in Key Vault |
-
-### Network / Proxy
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `https_proxy` | _(unset)_ | HTTPS proxy URL (e.g. `http://127.0.0.1:3128`) |
-| `http_proxy` | _(unset)_ | HTTP proxy URL |
 | `NODE_TLS_REJECT_UNAUTHORIZED` | `1` | Set to `0` for corporate proxy TLS interception |
+
+---
+
+## npm Scripts
+
+| Script | Description |
+|---|---|
+| `npm run build` | Build plugin for digital.auto (`index.js`, React external) |
+| `npm run standalone` | Build standalone (`standalone.js`, React bundled) |
+| `npm run standalone:dev` | Dev server with watch at `http://localhost:3011` |
+
+---
+
+## AosEdge VM Notes
+
+### SELinux
+
+AosCore VMs ship with SELinux in Enforcing mode, which blocks `crun` from
+running unsigned service binaries. Set it to Permissive on the VM:
+
+```bash
+ssh root@VM "setenforce 0"
+```
+
+### DNS
+
+VirtualBox NAT Network DNS often fails. Fix by adding public DNS:
+
+```bash
+ssh root@VM "mount -o remount,rw / && \
+  mkdir -p /etc/systemd/resolved.conf.d && \
+  printf '[Resolve]\nDNS=8.8.8.8 1.1.1.1\n' > /etc/systemd/resolved.conf.d/public-dns.conf && \
+  systemctl restart systemd-resolved"
+```
+
+### Container networking
+
+Services run inside `crun` containers with isolated networking. To reach
+services on the host (like KUKSA Databroker), use the IP from the AosCore
+resource config, not `localhost`. The VM's unit config maps the `kuksa`
+resource host to `Server` in the container's `/etc/hosts`.
 
 ---
 
@@ -201,78 +206,36 @@ Edge Unit (RPi5 / VM)
 ```
 aos-cloud-deployment/
 ├── src/
-│   ├── index.ts            # Plugin entry (registers on window.DAPlugins)
-│   ├── standalone.ts       # Standalone entry (bundles React, mounts directly)
-│   ├── setup-react.ts      # Sets globalThis.React for standalone mode
+│   ├── index.ts              # Plugin entry (window.DAPlugins)
+│   ├── standalone.ts         # Standalone entry (bundles React)
+│   ├── setup-react.ts        # Sets globalThis.React
 │   ├── components/
-│   │   └── Page.tsx        # Main UI component
+│   │   └── Page.tsx          # Main UI component
 │   ├── services/
-│   │   └── aos.service.ts  # Socket.IO client for Kit Manager
+│   │   └── aos.service.ts    # Socket.IO client
 │   ├── types/
-│   │   └── index.ts        # TypeScript type definitions
+│   │   └── index.ts          # TypeScript types
 │   └── presets/
-│       ├── index.ts        # Preset loader
-│       ├── config.yaml     # Example AOS config
-│       └── hello-aos.cpp   # Example C++ source
-├── standalone.html         # HTML shell for standalone mode
-├── build.sh                # Plugin build script (esbuild)
+│       ├── index.ts          # Hello AOS + KUKSA gRPC presets
+│       ├── config.yaml       # Example config
+│       └── hello-aos.cpp     # Example source
+├── standalone.html
+├── build.sh
 ├── package.json
 └── tsconfig.json
 ```
 
 ---
 
-## Common Operations
-
-### Restart broadcaster
-
-```bash
-docker rm -f aos-broadcaster
-docker run -d --network host \
-  -e NODE_TLS_REJECT_UNAUTHORIZED=0 \
-  -e INSTANCE_ID=AET-TOOLCHAIN-001 \
-  --name aos-broadcaster \
-  --entrypoint "node" \
-  aos-edge-toolchain:proxy /usr/local/bin/aos-broadcaster.js
-```
-
-### Build Docker image (if modified)
-
-```bash
-# Direct
-docker build -t aos-edge-toolchain .
-
-# Behind proxy
-docker build \
-  --build-arg https_proxy=http://127.0.0.1:3128 \
-  --build-arg http_proxy=http://127.0.0.1:3128 \
-  --network host \
-  -t aos-edge-toolchain:proxy .
-```
-
-### Develop with live-mounted broadcaster script
-
-Mount the script so changes apply without rebuilding the Docker image:
-
-```bash
-docker run -d --network host \
-  -e NODE_TLS_REJECT_UNAUTHORIZED=0 \
-  -e INSTANCE_ID=AET-TOOLCHAIN-001 \
-  -v $(pwd)/../aos-edge-toolchain/scripts/aos-broadcaster.js:/usr/local/bin/aos-broadcaster.js:ro \
-  --name aos-broadcaster \
-  --entrypoint "node" \
-  aos-edge-toolchain:proxy /usr/local/bin/aos-broadcaster.js
-```
-
----
-
 ## Troubleshooting
 
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| Blank page in standalone | React not on `globalThis` before Page loads | Make sure `setup-react.ts` is imported first in `standalone.ts` |
-| `xhr poll error` in broadcaster | TLS verification fails (corporate proxy) | Add `-e NODE_TLS_REJECT_UNAUTHORIZED=0` |
-| `getaddrinfo ENOTFOUND` | DNS doesn't resolve inside container | Use `--network host` + proxy env vars; the proxy handles DNS |
-| Build succeeds but sign fails | No certificate loaded | Use `CERT_FILE`, UI upload, or `AZURE_KEY_VAULT_NAME` |
-| Package too small after sign | Binary not in `src/` directory | `aos-toolkit.sh deploy` handles this automatically |
-| UI shows "No Prototype Selected" | Running plugin mode without host data | Use standalone mode (`npm run standalone`) for testing |
+| Problem | Fix |
+|---|---|
+| Broadcaster shows `xhr poll error` | Add `-e NODE_TLS_REJECT_UNAUTHORIZED=0` (corporate proxy) |
+| Build succeeds, upload fails | Check SP certificate is mounted and valid |
+| Service shows "Key has expired" on VM | Set `setenforce 0` on the VM (SELinux) |
+| gRPC app shows `N/A` values | Normal — gRPC works but no signal feeder running. See `docs/GUIDE.md` Part 6.4 |
+| gRPC app says "Connection refused" | Start databroker: `ssh root@VM "/usr/bin/databroker --insecure --port 55556 --address 0.0.0.0 --vss /usr/share/vss/vss.json &"` |
+| gRPC app says "required file not found" | Dynamic libs not bundled — rebuild Docker image to include `libgrpc++-dev` |
+| VM unit is Offline on AosCloud | Fix DNS on the VM (see VM Notes above) |
+| No Docker instances in UI | Check broadcaster logs; verify Kit Manager URL |

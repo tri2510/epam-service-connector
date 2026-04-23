@@ -1083,7 +1083,6 @@ export default function Page({ data, config }: PluginProps) {
         },
           React.createElement('option', { value: 'custom' }, 'Custom'),
           React.createElement('option', { value: 'helloAos' }, 'Hello AOS'),
-          React.createElement('option', { value: 'kuksaVehicleApp' }, 'KUKSA Vehicle App (Bridge)'),
           React.createElement('option', { value: 'kuksaGrpcApp' }, 'KUKSA gRPC App (Direct)')
         ),
         React.createElement('input', {

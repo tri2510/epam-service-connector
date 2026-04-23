@@ -212,6 +212,59 @@ async function main() {
   });
 }
 
+function detectArch(yamlConfig) {
+  const archMatch = yamlConfig.match(/arch:\s*(\S+)/);
+  const arch = archMatch ? archMatch[1] : '';
+  if (arch === 'aarch64' || arch === 'arm64') return 'aarch64';
+  if (arch === 'x86_64' || arch === 'amd64') return 'x86_64';
+  const { arch: hostArch } = require('os');
+  const ha = hostArch();
+  return (ha === 'x64' || ha === 'x86_64') ? 'x86_64' : 'aarch64';
+}
+
+function compilerForArch(arch) {
+  return arch === 'x86_64' ? 'g++' : 'aarch64-linux-gnu-g++';
+}
+
+async function bundleDynamicLibs(binaryPath, srcDir) {
+  try {
+    const { stdout } = await execAsync(`ldd ${binaryPath} 2>/dev/null`);
+    if (stdout.includes('not a dynamic executable')) return false;
+
+    const libsDir = path.join(srcDir, 'libs');
+    await fs.mkdir(libsDir, { recursive: true });
+
+    // Copy the ELF interpreter (ld-linux) — required because crun containers
+    // have a minimal rootfs without a dynamic linker
+    const { stdout: interpOut } = await execAsync(`readelf -l ${binaryPath} | grep 'interpreter' | sed 's/.*: //' | tr -d ']'`);
+    const interp = interpOut.trim();
+    if (interp) {
+      await fs.copyFile(interp, path.join(libsDir, path.basename(interp)));
+      console.log('[Build] Bundled dynamic linker:', path.basename(interp));
+    }
+
+    const lines = stdout.split('\n').filter(l => l.includes('=>'));
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      const libPath = parts[2];
+      if (libPath && libPath.startsWith('/')) {
+        try { await fs.copyFile(libPath, path.join(libsDir, path.basename(libPath))); } catch (e) { /* skip */ }
+      }
+    }
+
+    const binName = path.basename(binaryPath);
+    const ldName = interp ? path.basename(interp) : 'ld-linux-x86-64.so.2';
+    await fs.rename(path.join(srcDir, binName), path.join(srcDir, binName + '-bin'));
+    const wrapper = `#!/bin/sh\nDIR=$(dirname $(readlink -f $0))\nexec $DIR/libs/${ldName} --library-path $DIR/libs $DIR/${binName}-bin "$@"\n`;
+    await fs.writeFile(path.join(srcDir, binName), wrapper, { mode: 0o755 });
+    console.log('[Build] Bundled', lines.length, 'libs + wrapper for', binName);
+    return true;
+  } catch (e) {
+    console.warn('[Build] bundleDynamicLibs failed:', e.message);
+    return false;
+  }
+}
+
 async function handleBuildDeploy(data) {
   const appName = data.name || 'hello-aos';
   const cppCode = data.cppCode || '';
@@ -222,150 +275,79 @@ async function handleBuildDeploy(data) {
   console.log('[Build] YAML config length:', yamlConfig.length);
 
   try {
+    await execAsync('rm -rf /workspace/src /workspace/meta /workspace/project /workspace/generated', { cwd: workspaceDir });
     await fs.mkdir(path.join(workspaceDir, 'src'), { recursive: true });
     await fs.mkdir(path.join(workspaceDir, 'meta'), { recursive: true });
 
-    const cppFile = path.join(workspaceDir, 'src/main.cpp');
-    await fs.writeFile(cppFile, cppCode);
-    console.log('[Build] Wrote src/main.cpp');
-
-    const yamlFile = path.join(workspaceDir, 'meta/config.yaml');
-    await fs.writeFile(yamlFile, yamlConfig);
-    console.log('[Build] Wrote meta/config.yaml');
-
-    const stateFile = path.join(workspaceDir, 'meta/default_state.dat');
-    await fs.writeFile(stateFile, '');
-    console.log('[Build] Created meta/default_state.dat');
+    await fs.writeFile(path.join(workspaceDir, 'src/main.cpp'), cppCode);
+    await fs.writeFile(path.join(workspaceDir, 'meta/config.yaml'), yamlConfig);
+    await fs.writeFile(path.join(workspaceDir, 'meta/default_state.dat'), '');
 
     const certSrc = '/root/.aos/security/aos-user-sp.p12';
-    const certDst = path.join(workspaceDir, 'aos-user-sp.p12');
-    try {
-      await fs.copyFile(certSrc, certDst);
-      console.log('[Build] Copied certificate to workspace');
-    } catch (err) {
-      console.warn('[Build] Could not copy certificate:', err.message);
-    }
+    try { await fs.copyFile(certSrc, path.join(workspaceDir, 'aos-user-sp.p12')); } catch (e) { /* ok */ }
 
-    // Detect gRPC project: if code includes grpcpp, set up CMake + Conan build
+    const targetArch = detectArch(yamlConfig);
+    const cxx = compilerForArch(targetArch);
+    console.log('[Build] Target arch:', targetArch, '→ compiler:', cxx);
+
     const isGrpcProject = cppCode.includes('grpcpp') || cppCode.includes('grpc.pb.h');
-    let buildCmd;
+    const builtBinary = path.join(workspaceDir, appName);
 
     if (isGrpcProject) {
-      console.log('[Build] Detected gRPC project, setting up CMake + Conan build...');
-      const projectDir = path.join(workspaceDir, 'project');
-      await fs.mkdir(path.join(projectDir, 'src'), { recursive: true });
-      await fs.writeFile(path.join(projectDir, 'src/main.cpp'), cppCode);
+      console.log('[Build] Detected gRPC project');
+      const genDir = path.join(workspaceDir, 'generated');
+      await fs.mkdir(path.join(genDir, 'kuksa/val/v1'), { recursive: true });
+      const protoDir = '/usr/local/share/kuksa-proto';
+      const grpcPlugin = (await execAsync('which grpc_cpp_plugin').catch(() => ({stdout:'/usr/bin/grpc_cpp_plugin'}))).stdout.trim();
 
-      // Write CMakeLists.txt for gRPC KUKSA project
-      const cmakeContent = `cmake_minimum_required(VERSION 3.16)
-project(${appName} CXX)
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-find_package(protobuf REQUIRED)
-find_package(gRPC REQUIRED)
+      for (const proto of ['types', 'val']) {
+        await execAsync(`protoc --proto_path=${protoDir} --cpp_out=${genDir} --grpc_out=${genDir} --plugin=protoc-gen-grpc=${grpcPlugin} ${protoDir}/kuksa/val/v1/${proto}.proto`);
+      }
+      console.log('[Build] Proto stubs generated');
 
-set(PROTO_DIR "/usr/local/share/kuksa-proto")
-set(PROTO_GEN_DIR "\${CMAKE_BINARY_DIR}/generated")
-file(MAKE_DIRECTORY \${PROTO_GEN_DIR})
-
-find_program(PROTOC protoc REQUIRED)
-find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
-
-foreach(proto_name types val)
-  add_custom_command(
-    OUTPUT \${PROTO_GEN_DIR}/kuksa/val/v1/\${proto_name}.pb.cc
-           \${PROTO_GEN_DIR}/kuksa/val/v1/\${proto_name}.pb.h
-           \${PROTO_GEN_DIR}/kuksa/val/v1/\${proto_name}.grpc.pb.cc
-           \${PROTO_GEN_DIR}/kuksa/val/v1/\${proto_name}.grpc.pb.h
-    COMMAND \${PROTOC}
-      --proto_path=\${PROTO_DIR}
-      --cpp_out=\${PROTO_GEN_DIR}
-      --grpc_out=\${PROTO_GEN_DIR}
-      --plugin=protoc-gen-grpc=\${GRPC_CPP_PLUGIN}
-      \${PROTO_DIR}/kuksa/val/v1/\${proto_name}.proto
-    COMMENT "Generating C++ for \${proto_name}.proto"
-  )
-endforeach()
-
-add_executable(${appName}
-  src/main.cpp
-  \${PROTO_GEN_DIR}/kuksa/val/v1/types.pb.cc
-  \${PROTO_GEN_DIR}/kuksa/val/v1/types.grpc.pb.cc
-  \${PROTO_GEN_DIR}/kuksa/val/v1/val.pb.cc
-  \${PROTO_GEN_DIR}/kuksa/val/v1/val.grpc.pb.cc
-)
-target_include_directories(${appName} PRIVATE \${PROTO_GEN_DIR})
-target_link_libraries(${appName} gRPC::grpc++ protobuf::libprotobuf)
-`;
-      await fs.writeFile(path.join(projectDir, 'CMakeLists.txt'), cmakeContent);
-
-      const conanContent = `[requires]\ngrpc/1.54.3\nprotobuf/3.21.12\n\n[generators]\nCMakeDeps\nCMakeToolchain\n`;
-      await fs.writeFile(path.join(projectDir, 'conanfile.txt'), conanContent);
-
-      console.log('[Build] Wrote CMakeLists.txt + conanfile.txt');
-      buildCmd = `/usr/local/bin/aos-toolkit.sh build project/ ${appName}`;
+      const grpcFlags = targetArch === 'x86_64'
+        ? '$(pkg-config --cflags --libs grpc++ protobuf) -lpthread'
+        : '-I/opt/grpc-aarch64/include -L/opt/grpc-aarch64/lib -lgrpc++ -lprotobuf -lpthread';
+      const staticFlag = targetArch === 'x86_64' ? '' : '-static';
+      const compileCmd = `${cxx} -std=c++17 -O2 ${staticFlag} -I${genDir} ` +
+        `${workspaceDir}/src/main.cpp ` +
+        `${genDir}/kuksa/val/v1/types.pb.cc ${genDir}/kuksa/val/v1/types.grpc.pb.cc ` +
+        `${genDir}/kuksa/val/v1/val.pb.cc ${genDir}/kuksa/val/v1/val.grpc.pb.cc ` +
+        `${grpcFlags} -o ${builtBinary}`;
+      console.log('[Build] Compiling gRPC app...');
+      await execAsync(compileCmd, { cwd: workspaceDir, env: { ...process.env }, timeout: 300000 });
     } else {
-      buildCmd = `/usr/local/bin/aos-toolkit.sh build src/main.cpp ${appName}`;
+      const staticFlag = '-static';
+      const compileCmd = `${cxx} ${staticFlag} -std=c++17 -O2 ${workspaceDir}/src/main.cpp -o ${builtBinary}`;
+      console.log('[Build] Compiling simple app...');
+      await execAsync(compileCmd, { cwd: workspaceDir, timeout: 60000 });
     }
 
-    console.log('[Build] Running build command...');
-    const { stdout: buildOut, stderr: buildErr } = await execAsync(buildCmd, {
-      cwd: workspaceDir,
-      env: { ...process.env },
-      timeout: 600000
-    });
+    const { stdout: fileOut } = await execAsync(`file ${builtBinary}`);
+    console.log('[Build]', fileOut.trim());
 
-    console.log('[Build] Build output:', buildOut.slice(-200));
+    await fs.copyFile(builtBinary, path.join(workspaceDir, 'src', appName));
+    try { await fs.unlink(path.join(workspaceDir, 'src/main.cpp')); } catch (e) { /* ok */ }
 
-    const builtBinary = path.join(workspaceDir, appName);
-    const binaryInSrc = path.join(workspaceDir, 'src', appName);
-    try {
-      await fs.copyFile(builtBinary, binaryInSrc);
-      console.log('[Build] Copied binary to src/ for packaging');
-    } catch (err) {
-      console.warn('[Build] Binary copy warning:', err.message);
+    if (isGrpcProject && targetArch === 'x86_64') {
+      await bundleDynamicLibs(path.join(workspaceDir, 'src', appName), path.join(workspaceDir, 'src'));
     }
 
-    // Remove source file from src/ — aos-signer packages everything in src/
-    // and the device bridge plugin only expects the binary
-    try {
-      await fs.unlink(path.join(workspaceDir, 'src/main.cpp'));
-      console.log('[Build] Removed main.cpp from src/ (only binary should be packaged)');
-    } catch (err) { /* ignore if already gone */ }
+    console.log('[Build] Signing...');
+    const { stdout: signOut, stderr: signErr } = await execAsync('aos-signer sign', { cwd: workspaceDir, env: { ...process.env } });
+    console.log('[Build] Sign:', signOut.slice(-200));
 
-    console.log('[Build] Running sign command...');
-    const signCmd = '/usr/local/bin/aos-toolkit.sh sign';
-    const { stdout: signOut, stderr: signErr } = await execAsync(signCmd, {
-      cwd: workspaceDir,
-      env: { ...process.env }
-    });
-
-    console.log('[Build] Sign stdout:', signOut.slice(-200));
-    if (signErr) {
-      console.log('[Build] Sign stderr:', signErr.slice(-500));
-    }
-
-    const pkgPath = path.join(workspaceDir, 'service.tar.gz');
-    const pkgStats = await fs.stat(pkgPath).catch(() => null);
-
-    if (!pkgStats) {
-      throw new Error('Package not created after signing. stderr: ' + (signErr || 'unknown'));
-    }
-
-    console.log('[Build] Package created:', pkgStats.size, 'bytes');
+    const pkgStats = await fs.stat(path.join(workspaceDir, 'service.tar.gz')).catch(() => null);
+    if (!pkgStats) throw new Error('Package not created after signing');
+    console.log('[Build] Package:', pkgStats.size, 'bytes');
 
     let uploadResult = null;
     try {
-      console.log('[Build] Attempting upload...');
-      const uploadCmd = '/usr/local/bin/aos-toolkit.sh upload';
-      const { stdout: uploadOut } = await execAsync(uploadCmd, {
-        cwd: workspaceDir,
-        env: { ...process.env }
-      });
+      const { stdout: uploadOut } = await execAsync('aos-signer upload', { cwd: workspaceDir, env: { ...process.env } });
       uploadResult = uploadOut;
-      console.log('[Build] Upload output:', uploadOut.slice(-200));
+      console.log('[Build] Upload:', uploadOut.slice(-200));
     } catch (uploadErr) {
-      console.log('[Build] Upload skipped or failed:', uploadErr.message.slice(-100));
+      console.log('[Build] Upload failed:', uploadErr.message.slice(-100));
     }
 
     return {

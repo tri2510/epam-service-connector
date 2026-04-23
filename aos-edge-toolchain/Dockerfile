@@ -33,6 +33,8 @@ RUN apt-get update && apt-get install -y \
     npm \
     autoconf automake libtool pkg-config \
     protobuf-compiler libprotobuf-dev \
+    libgrpc++-dev protobuf-compiler-grpc \
+    libnss3-tools ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Install socket.io-client + proxy agent for Socket.IO through corporate proxy
@@ -42,12 +44,19 @@ RUN npm install --global --prefix=/usr/local socket.io-client https-proxy-agent
 RUN ln -sf /usr/bin/aarch64-linux-gnu-g++ /usr/local/bin/aarch64-linux-gnu-g++ && \
     ln -sf /usr/bin/aarch64-linux-gnu-gcc /usr/local/bin/aarch64-linux-gnu-gcc
 
-# Install Conan 2 + aos-signer + Azure SDK
+# Install Conan 2 + aos-signer + aos-keys + Azure SDK
 RUN pip3 install --break-system-packages \
     "conan>=2.0" \
     aos-signer \
+    aos-keys \
     azure-identity \
     azure-keyvault-secrets
+
+# Install Aos Root CA as trusted (for aos-signer upload TLS)
+RUN python3 -m aos_keys install-root 2>/dev/null || true
+RUN if [ -f /root/.aos/scripts/install_aos_root_ca.sh ]; then \
+      bash /root/.aos/scripts/install_aos_root_ca.sh; \
+    fi
 
 # Setup Conan default profile and aarch64 cross-compile profile
 RUN conan profile detect --force
