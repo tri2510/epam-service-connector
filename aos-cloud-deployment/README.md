@@ -62,18 +62,40 @@ python3 -m http.server 3011
 
 1. Open **http://localhost:3011/standalone.html**
 2. Select **AET-TOOLCHAIN-001** from Docker Instances
-3. Pick a preset: **Hello AOS** or **KUKSA gRPC App**
+3. Pick a preset:
+   - **Hello AOS** — simple test app
+   - **KUKSA Writer** — writes simulated vehicle signals via gRPC `Set()`
+   - **KUKSA Reader** — subscribes to signals via gRPC `Subscribe()` streaming
 4. Click **Build & Deploy**
 
 The toolchain compiles for the target architecture (auto-detected from
 `config.yaml`), signs with your SP certificate, uploads to AosCloud, and the
 VM automatically pulls and runs the new version.
 
-### 5. Verify on the VM
+### 5. Two-app communication demo
+
+Deploy both Writer and Reader to see them communicate through the databroker:
+
+1. Select **KUKSA Writer** preset → set version → **Build & Deploy**
+2. Select **KUKSA Reader** preset → set version → **Build & Deploy**
+3. Both apps run in separate crun containers on the same VM
+4. Writer writes signals every 2s, Reader receives them instantly via streaming
+
+### 6. Verify on the VM
 
 ```bash
+# See both Writer and Reader interleaved
 sshpass -p 'Password1' ssh -p <SSH_PORT> root@localhost \
-  "journalctl -f | grep crun"
+  "journalctl -f | grep -E 'Writer|Reader'"
+```
+
+Expected output showing cause → effect:
+
+```
+crun[1578]: [Writer] t=160 Speed=31.36 Temp=26.95 SoC=78.4
+crun[1596]: [Reader] #479: Vehicle.Speed=31.362900
+crun[1596]: [Reader] #480: Vehicle.Cabin.HVAC.AmbientAirTemperature=26.946791
+crun[1596]: [Reader] #481: Vehicle.Powertrain.TractionBattery.StateOfCharge.Current=78.400002
 ```
 
 ---
@@ -126,10 +148,14 @@ a minimal rootfs that has no shared libraries.
 
 ## Presets
 
-| Preset | Description |
-|---|---|
-| **Hello AOS** | Simple static C++ app that prints a message every 10s |
-| **KUKSA gRPC App** | Reads vehicle signals via gRPC from KUKSA Databroker (port 55555). Uses `Server:55555` as default target — AosCore maps the `kuksa` resource hostname |
+| Preset | Service | Description |
+|---|---|---|
+| **Hello AOS** | `digital-auto-aos-service1` | Simple static C++ app that prints a message every 10s |
+| **KUKSA Writer** | `kuksa-signal-writer` | Writes simulated Speed, Temp, SoC signals via gRPC `Set()` every 2s |
+| **KUKSA Reader** | `kuksa-signal-reader` | Subscribes to signals via gRPC `Subscribe()` streaming, prints received updates |
+
+Writer and Reader use separate AosCloud services so both run simultaneously
+in separate crun containers, communicating through the shared KUKSA Databroker.
 
 ---
 
@@ -216,7 +242,7 @@ aos-cloud-deployment/
 │   ├── types/
 │   │   └── index.ts          # TypeScript types
 │   └── presets/
-│       ├── index.ts          # Hello AOS + KUKSA gRPC presets
+│       ├── index.ts          # Hello AOS + KUKSA Writer + KUKSA Reader presets
 │       ├── config.yaml       # Example config
 │       └── hello-aos.cpp     # Example source
 ├── standalone.html
@@ -234,8 +260,9 @@ aos-cloud-deployment/
 | Broadcaster shows `xhr poll error` | Add `-e NODE_TLS_REJECT_UNAUTHORIZED=0` (corporate proxy) |
 | Build succeeds, upload fails | Check SP certificate is mounted and valid |
 | Service shows "Key has expired" on VM | Set `setenforce 0` on the VM (SELinux) |
-| gRPC app shows `N/A` values | Normal — gRPC works but no signal feeder running. See `docs/GUIDE.md` Part 6.4 |
+| Reader shows `N/A` values | Writer not deployed yet, or databroker not running |
 | gRPC app says "Connection refused" | Start databroker: `ssh root@VM "/usr/bin/databroker --insecure --port 55556 --address 0.0.0.0 --vss /usr/share/vss/vss.json &"` |
+| Only one app runs, not both | Each app needs a separate AosCloud service UUID. Both services must be in the subject |
 | gRPC app says "required file not found" | Dynamic libs not bundled — rebuild Docker image to include `libgrpc++-dev` |
 | VM unit is Offline on AosCloud | Fix DNS on the VM (see VM Notes above) |
 | No Docker instances in UI | Check broadcaster logs; verify Kit Manager URL |
