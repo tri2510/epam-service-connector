@@ -133,6 +133,9 @@ sshpass -p 'Password1' ssh -p <SSH_PORT> -o StrictHostKeyChecking=no root@localh
   "setenforce 0 && echo SELinux=\$(getenforce)"
 ```
 
+**Important:** This does NOT persist across reboots. Run it again after every
+VM restart. The DNS fix (step 2.3) persists because it writes to disk.
+
 ### 2.5 Provision
 
 ```bash
@@ -360,6 +363,25 @@ Host (optional)                   VM (VirtualBox)
 
 ---
 
+## Inside-VM Steps (unavoidable)
+
+All done via SSH from the host — no interactive login required.
+
+| Step | Persists across reboot? | When needed |
+|---|---|---|
+| DNS fix (Part 2.3) | Yes (writes to disk) | Once after first boot |
+| SELinux permissive (Part 2.4) | **No** — resets to Enforcing | After every VM reboot |
+| Start databroker (Part 6.1) | **No** — process dies | Only for KUKSA gRPC app |
+
+After every VM reboot, run:
+
+```bash
+sshpass -p 'Password1' ssh -p <SSH_PORT> -o StrictHostKeyChecking=no root@localhost \
+  "setenforce 0 && /usr/bin/databroker --insecure --port 55556 --address 0.0.0.0 --vss /usr/share/vss/vss.json &"
+```
+
+---
+
 ## VM Management
 
 ```bash
@@ -370,6 +392,11 @@ VBoxManage controlvm secondary-1 poweroff
 # Start VMs
 VBoxManage startvm main --type headless
 VBoxManage startvm secondary-1 --type headless
+
+# After start: fix SELinux + start databroker (wait 40s for boot)
+sleep 40
+sshpass -p 'Password1' ssh -p <SSH_PORT> -o StrictHostKeyChecking=no root@localhost \
+  "setenforce 0 && /usr/bin/databroker --insecure --port 55556 --address 0.0.0.0 --vss /usr/share/vss/vss.json &"
 
 # SSH into VM (default: root / Password1)
 sshpass -p 'Password1' ssh -p <SSH_PORT> -o StrictHostKeyChecking=no root@localhost
