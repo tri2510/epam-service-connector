@@ -57,16 +57,17 @@ the EV Range Extender app, and appear live on a standalone browser dashboard.
 | Signal Reporter | `presets/signal-reporter.cpp` | C++ (gRPC + HTTP) | AosCloud OTA → HPC VM |
 | KUKSA-to-KUKSA Bridge | `kuksa-sync/kuksa-bridge.py` | Python (gRPC) | Standalone process |
 | End ECU Simulator | `end-simulator/simulator.py` | Python (gRPC) | Standalone process |
-| Standalone Dashboard | `dashboard/index.html` | HTML/JS/CSS | Open in browser |
-| Broadcaster relay | Extended in `aos-edge-toolchain/scripts/aos-broadcaster.js` | Node.js | Docker |
+| Standalone Dashboard | `dashboard/standalone.html` | React/TypeScript | `npm run standalone:dev` on :3012 |
+| Deployment UI | `aos-cloud-deployment/standalone.html` | React/TypeScript | `npm run standalone:dev` on :3011 |
+| Broadcaster relay | `aos-edge-toolchain/scripts/aos-broadcaster.js` | Node.js | Docker |
 
 ## Vehicle Signals
 
 | Signal (VSS path) | Source | Domain |
 |---|---|---|
-| `Vehicle.Speed` | Zonal Writer | Zonal |
-| `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` | Zonal Writer | Zonal |
-| `Vehicle.Cabin.HVAC.AmbientAirTemperature` | Zonal Writer | Zonal |
+| `Vehicle.Speed` | Signal Writer | Zonal |
+| `Vehicle.Powertrain.TractionBattery.StateOfCharge.Current` | Signal Writer | Zonal |
+| `Vehicle.Cabin.HVAC.AmbientAirTemperature` | Signal Writer | Zonal |
 | `Vehicle.Cabin.HVAC.TargetTemperature` | End Simulator | End |
 | `Vehicle.Infotainment.Display.Brightness` | End Simulator | End |
 | `Vehicle.Cabin.Seat.VentilationLevel` | End Simulator | End |
@@ -95,51 +96,34 @@ EVERY 2 seconds:
   Print status to stdout (visible in AosCloud service logs)
 ```
 
-## Quick Start (Docker Compose)
+---
 
-The fastest way to launch the demo stack (KUKSA brokers + bridge + simulator):
+## Part A — Local Demo (no edge hardware needed)
 
-```bash
-cd sdv-blueprint
-docker compose up
-```
-
-This starts four services: HPC KUKSA (:55555), Zonal KUKSA (:55556),
-KUKSA bridge, and End ECU simulator.  The broadcaster is commented out
-in `docker-compose.yml` — uncomment it after building the
-`aos-edge-toolchain` Docker image and placing your `.p12` certificate.
-
-Then open `dashboard/index.html` in your browser.
-
-### Building C++ presets locally
-
-```bash
-cd sdv-blueprint
-make protos    # download KUKSA proto files
-make all       # build signal-writer, ev-range-extender, signal-reporter
-```
-
-Requires `protobuf-compiler`, `libgrpc++-dev`, `libprotobuf-dev`.
-
-## Quick Start (Manual)
+Run the full signal pipeline on your dev machine using Docker and Python.
+This validates the dashboard, signal flow, and bridge without AosCloud or real units.
 
 ### Prerequisites
 
 - Docker running on your dev machine
-- Two KUKSA Databroker instances (HPC + Zonal)
-- AosCloud account with SP certificate (`.p12` file)
-- Python 3.10+ with pip
+- Python 3.10+ with `pip install kuksa-client grpcio`
 
-### Step 1 — Generate merged VSS metadata (one time)
+### A1 — Generate merged VSS metadata
 
-The blueprint uses custom signal paths not in stock VSS 5.1. Run once to
-generate the merged metadata file used by both databrokers:
+The blueprint uses custom signal paths not in stock VSS 5.1. Run once:
 
 ```bash
 cd sdv-blueprint
+
+# Extract the base VSS JSON from the KUKSA image
+docker create --name kuksa-tmp ghcr.io/eclipse-kuksa/kuksa-databroker:latest
+docker cp kuksa-tmp:/vss_release_5.1.json /tmp/vss_base.json
+docker rm kuksa-tmp
+
+# Merge our custom paths into it
 python3 -c "
-import json, sys
-with open('/tmp/vss_base.json' if __import__('os').path.exists('/tmp/vss_base.json') else 'vss-merged.json') as f: base = json.load(f)
+import json
+with open('/tmp/vss_base.json') as f: base = json.load(f)
 with open('vss-overlay.json') as f: overlay = json.load(f)
 def merge(b, o):
     for k, v in o.items():
@@ -151,14 +135,9 @@ print('vss-merged.json written')
 "
 ```
 
-Or simply extract the base from the image first:
-```bash
-docker create --name tmp ghcr.io/eclipse-kuksa/kuksa-databroker:latest
-docker cp tmp:/vss_release_5.1.json /tmp/vss_base.json
-docker rm tmp
-```
+**Verify:** `ls -lh vss-merged.json` should show ~350 KB.
 
-### Step 2 — Start two KUKSA Databrokers
+### A2 — Start KUKSA Databrokers
 
 ```bash
 # HPC KUKSA (port 55555)
@@ -172,30 +151,100 @@ docker run -d --rm --name kuksa-zonal --network host \
   ghcr.io/eclipse-kuksa/kuksa-databroker:latest --insecure --port 55556 --metadata /vss.json
 ```
 
-### Step 3 — Start the KUKSA-to-KUKSA bridge
+**Verify:** `docker logs kuksa-hpc 2>&1 | grep Listening` should show `Listening on 0.0.0.0:55555`.
+
+### A3 — Start the KUKSA bridge + End simulator
+
+Open two terminals:
 
 ```bash
+# Terminal 1 — Bridge (syncs Zonal → HPC)
 cd sdv-blueprint/kuksa-sync
 pip install -r requirements.txt
 ZONAL_KUKSA_ADDR=localhost:55556 HPC_KUKSA_ADDR=localhost:55555 python3 kuksa-bridge.py
 ```
 
-### Step 4 — Start the End ECU simulator
-
 ```bash
+# Terminal 2 — End ECU simulator
 cd sdv-blueprint/end-simulator
 pip install -r requirements.txt
 KUKSA_ADDR=localhost:55556 python3 simulator.py
 ```
 
-### Step 5 — Start the broadcaster with signal relay
+**Verify:** Bridge shows `Subscribing to 6 signals on Zonal...` and simulator shows `[EndSim] t=0`.
+
+### A4 — Open the dashboard
 
 ```bash
-# Build the toolchain Docker image (if not already built)
+cd sdv-blueprint/dashboard
+npm install
+npm run standalone:dev
+```
+
+Open http://localhost:3012/standalone.html in your browser.
+The broadcaster instance ID `AET-TOOLCHAIN-001` is pre-filled. Click **Connect**.
+
+**Verify:** Green dot shows "Connected". Signal gauges for Target Temp, Display,
+and Seat Vent should show values. Speed, SoC, Ambient Temp will show values
+after a Signal Writer is running (see Part B, or run one locally — see A5).
+
+### A5 — (Optional) Run a local Signal Writer
+
+To see all 9 gauges without deploying to AosCloud, run a Python Signal Writer:
+
+```bash
+KUKSA_ADDR=localhost:55556 python3 -c "
+import grpc, time, math
+from kuksa.val.v1 import val_pb2, val_pb2_grpc, types_pb2
+stub = val_pb2_grpc.VALStub(grpc.insecure_channel('localhost:55556'))
+t = 0
+while True:
+    for path, val in [
+        ('Vehicle.Speed', 40 + 30 * math.sin(t * 0.1)),
+        ('Vehicle.Cabin.HVAC.AmbientAirTemperature', 22 + 5 * math.sin(t * 0.05)),
+        ('Vehicle.Powertrain.TractionBattery.StateOfCharge.Current', max(0, 80 - (t*0.1) % 80)),
+    ]:
+        dp = types_pb2.Datapoint(float=val)
+        entry = types_pb2.DataEntry(path=path, value=dp)
+        update = val_pb2.EntryUpdate(entry=entry, fields=[types_pb2.FIELD_VALUE])
+        stub.Set(val_pb2.SetRequest(updates=[update]), timeout=3)
+    t += 1; time.sleep(2)
+"
+```
+
+**Verify:** Reconnect the dashboard (click Connect again). Speed, SoC, and
+Ambient Temp gauges now show live values.
+
+---
+
+## Part B — Full Deployment via AosCloud
+
+Deploy the C++ services to real edge hardware via AosCloud OTA.
+
+### Prerequisites
+
+- **2 edge units** registered in AosCloud (e.g. Raspberry Pi 5 running AosCore)
+  - **HPC unit** — runs KUKSA Databroker on port 55555
+  - **Zonal unit** — runs KUKSA Databroker on port 55556
+- **AosCloud SP certificate** (`.p12` file) — request from your AosCloud administrator
+- **KUKSA bridge** running between the two units (see Part A, Step A3)
+- **End Simulator** running against the Zonal unit (see Part A, Step A3)
+
+### B1 — Set up AosCloud units
+
+1. Log in to [AosCloud](https://aoscloud.io)
+2. Register two units with their system UIDs:
+   - **HPC** unit (the one with KUKSA on :55555)
+   - **Zonal** unit (the one with KUKSA on :55556)
+3. Create a **subject** (deployment group) and assign both units to it
+4. Note the **unit UIDs** and **subject ID** — you'll need them for deployment
+
+### B2 — Start the broadcaster
+
+```bash
 cd aos-edge-toolchain
 docker build -t aos-edge-toolchain:latest .
 
-# Run with signal relay enabled
 docker run -d --network host \
   --name aos-broadcaster \
   --entrypoint "" \
@@ -211,47 +260,99 @@ docker run -d --network host \
   sh -c "python3 /usr/local/bin/init-certs.py && exec node /usr/local/bin/aos-broadcaster.js"
 ```
 
-### Step 6 — Open the dashboard
+**Verify:** `docker logs aos-broadcaster 2>&1 | grep Connected` shows
+`Connected to Kit Manager` and `SignalRelay HTTP listener on port 9100`.
 
-Open `sdv-blueprint/dashboard/index.html` in your browser.
-Enter your broadcaster instance ID and click Connect.
+### B3 — Deploy services via the Deployment UI
 
-### Step 7 — Deploy AOS services
+```bash
+cd aos-cloud-deployment
+npm install
+npm run standalone:dev    # opens on http://localhost:3011
+```
 
-Use the existing standalone UI (`aos-cloud-deployment/standalone.html`) or the
-new dashboard to deploy:
+Open http://localhost:3011/standalone.html and deploy three services in order:
 
-1. **Signal Writer** (to Zonal VM) — writes Speed, SoC, Temperature
-2. **EV Range Extender** (to HPC VM) — reads SoC, computes Range, actuates
-3. **Signal Reporter** (to HPC VM) — subscribes to all signals, pushes to dashboard
+1. **Signal Writer → Zonal unit**
+   - Select preset: **KUKSA Writer**
+   - Click **Build & Deploy**
+   - Writes Speed, SoC, AmbientAirTemperature to Zonal KUKSA
 
-### Step 8 — Watch the demo
+2. **EV Range Extender → HPC unit**
+   - Select preset: **EV Range Extender**
+   - Click **Build & Deploy**
+   - Reads SoC, computes Range, actuates Lights and Seat Heating
 
-- Dashboard shows live signals from all three nodes
-- When SoC drops below 20%, EV Range Extender switches to POWER_SAVE
-- Lights dim, seat heating turns off, range computation changes
-- All visible in real-time on the dashboard
+3. **Signal Reporter → HPC unit**
+   - Select preset: **Signal Reporter**
+   - Click **Build & Deploy**
+   - Subscribes to all 9 signals, pushes to broadcaster relay
+
+**Verify:** In the Deployment UI left panel, select your service from the
+AosCloud Service dropdown. The Units panel shows which units have the service
+installed and their run state.
+
+### B4 — Watch the demo on the dashboard
+
+Open the SDV Blueprint dashboard:
+
+```bash
+cd sdv-blueprint/dashboard
+npm install
+npm run standalone:dev    # opens on http://localhost:3012
+```
+
+Open http://localhost:3012/standalone.html, enter `AET-TOOLCHAIN-001`, click **Connect**.
+
+All 9 signal gauges should show live values:
+- Speed, SoC, Ambient Temp — from Signal Writer on Zonal
+- Target Temp, Display, Seat Vent — from End Simulator
+- Range, Lights, Seat Heat — computed/actuated by EV Range Extender on HPC
+
+When SoC drops below 20%, the EV Range Extender panel switches to
+**POWER SAVE** (red), lights dim to 30%, seat heating turns off, and range
+drops to degraded efficiency.
+
+---
+
+## Building C++ presets locally
+
+```bash
+cd sdv-blueprint
+make protos    # download KUKSA proto files
+make all       # build signal-writer, ev-range-extender, signal-reporter
+```
+
+Requires `protobuf-compiler`, `libgrpc++-dev`, `libprotobuf-dev`.
 
 ## File Reference
 
 ```
 sdv-blueprint/
 ├── README.md                       ← this file
-├── docker-compose.yml              ← one-command demo launch
+├── docker-compose.yml              ← one-command local demo (Part A)
 ├── Dockerfile.python               ← image for Python services
 ├── Makefile                        ← local C++ build (make protos && make all)
-├── vss-overlay.json                ← custom VSS paths (merged into vss-merged.json)
+├── vss-overlay.json                ← custom VSS paths for KUKSA Databroker
 ├── presets/
-│   ├── signal-writer.cpp           ← Signal Writer C++ source (Zonal)
+│   ├── signal-writer.cpp           ← Signal Writer C++ source (→ Zonal)
 │   ├── signal-writer.yaml          ← AOS service config
-│   ├── ev-range-extender.cpp       ← EV Range Extender C++ source (HPC)
+│   ├── ev-range-extender.cpp       ← EV Range Extender C++ source (→ HPC)
 │   ├── ev-range-extender.yaml      ← AOS service config
-│   ├── signal-reporter.cpp         ← Signal Reporter C++ source (HPC)
+│   ├── signal-reporter.cpp         ← Signal Reporter C++ source (→ HPC)
 │   └── signal-reporter.yaml        ← AOS service config
 ├── dashboard/
-│   ├── index.html                  ← standalone dashboard (open in browser)
-│   ├── dashboard.js                ← signal visualization logic
-│   └── dashboard.css               ← styling
+│   ├── standalone.html             ← standalone React app entry point
+│   ├── package.json                ← npm deps + scripts
+│   ├── src/
+│   │   ├── standalone.ts           ← mounts Dashboard component
+│   │   ├── index.ts                ← widget plugin entry (mount/unmount)
+│   │   ├── components/Dashboard.tsx ← main UI (gauges, mode, logs)
+│   │   ├── services/signal.service.ts ← Socket.IO connection to broadcaster
+│   │   └── types/index.ts          ← signal types, VSS paths
+│   ├── index.html                  ← simple file:// version (no build needed)
+│   ├── dashboard.js                ← vanilla JS version
+│   └── dashboard.css               ← dark theme styling
 ├── end-simulator/
 │   ├── simulator.py                ← End ECU sensor simulator
 │   └── requirements.txt
