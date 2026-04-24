@@ -36,6 +36,48 @@ if (proxyUrl) {
 let socket;
 let broadcastTimer = null;
 
+// --- Signal Relay: receives HTTP POST from Signal Reporter AOS service
+// and forwards signal updates to all connected browser clients via Socket.IO.
+const signalRelayPort = parseInt(process.env.SIGNAL_RELAY_PORT || '9100');
+const signalHistory = [];          // ring buffer, last 500 entries
+const SIGNAL_HISTORY_MAX = 500;
+
+const http = require('http');
+const signalServer = http.createServer((req, res) => {
+  if (req.method === 'POST' && req.url === '/signal') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const signal = JSON.parse(body);
+        signalHistory.push(signal);
+        if (signalHistory.length > SIGNAL_HISTORY_MAX) signalHistory.shift();
+        if (socket && socket.connected) {
+          socket.emit('broadcastToClient', {
+            type: 'signal-update',
+            kit_id: instanceId,
+            ...signal
+          });
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{"ok":true}');
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end('{"ok":false,"error":"invalid json"}');
+      }
+    });
+  } else if (req.method === 'GET' && req.url === '/signals') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(signalHistory.slice(-100)));
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+signalServer.listen(signalRelayPort, '0.0.0.0', () => {
+  console.log('[SignalRelay] HTTP listener on port', signalRelayPort);
+});
+
 async function initCertFromEnv() {
   const certFile = process.env.CERT_FILE;
   if (!certFile) return;
@@ -103,7 +145,8 @@ async function main() {
         'aos_get_unit_monitoring',
         'aos_get_alerts',
         'aos_request_service_log',
-        'aos_get_service_log_status'
+        'aos_get_service_log_status',
+        'aos_signal_stream'
       ],
       type: 'aos-edge-toolchain',
       suffix: instanceId.split('-')[0],
@@ -183,6 +226,14 @@ async function main() {
           break;
         case 'aos_get_service_log_status':
           response = await handleGetServiceLogStatus(data);
+          break;
+        case 'aos_signal_stream':
+          response = {
+            kit_id: instanceId,
+            type: 'aos_signal_stream',
+            status: 'success',
+            signals: signalHistory.slice(-(data.limit || 100))
+          };
           break;
         default:
           response = {

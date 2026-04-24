@@ -333,5 +333,458 @@ configuration:
         mem: 50MB
         state: 512KB
         storage: 25MB`
+  },
+
+  evRangeExtender: {
+    name: 'EV Range Extender',
+    appName: 'ev-range-extender',
+    description: 'Reads SoC, switches to POWER_SAVE below 20%, actuates lights/seat/HVAC, computes range',
+    cpp: `#include <iostream>
+#include <string>
+#include <thread>
+#include <chrono>
+#include <cstdlib>
+#include <cmath>
+#include <atomic>
+
+#include <grpcpp/grpcpp.h>
+#include "kuksa/val/v1/val.grpc.pb.h"
+#include "kuksa/val/v1/types.pb.h"
+
+#define VERSION "1.0.0"
+#define SOC_THRESHOLD 20.0f
+#define NORMAL_EFFICIENCY 5.5f
+#define DEGRADED_EFFICIENCY 4.0f
+
+static float get_signal(kuksa::val::v1::VAL::Stub* stub,
+                        const std::string& path) {
+    kuksa::val::v1::GetRequest request;
+    auto* entry = request.add_entries();
+    entry->set_path(path);
+    entry->set_view(kuksa::val::v1::VIEW_CURRENT_VALUE);
+    entry->add_fields(kuksa::val::v1::FIELD_VALUE);
+
+    kuksa::val::v1::GetResponse response;
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::seconds(3));
+
+    auto status = stub->Get(&context, request, &response);
+    if (!status.ok() || response.entries_size() == 0) return -1.0f;
+
+    const auto& dp = response.entries(0).value();
+    switch (dp.value_case()) {
+        case kuksa::val::v1::Datapoint::kFloat:  return dp.float_();
+        case kuksa::val::v1::Datapoint::kDouble: return static_cast<float>(dp.double_());
+        case kuksa::val::v1::Datapoint::kInt32:  return static_cast<float>(dp.int32());
+        case kuksa::val::v1::Datapoint::kUint32: return static_cast<float>(dp.uint32());
+        default: return -1.0f;
+    }
+}
+
+static bool set_signal(kuksa::val::v1::VAL::Stub* stub,
+                       const std::string& path, float value) {
+    kuksa::val::v1::SetRequest request;
+    auto* update = request.add_updates();
+    update->mutable_entry()->set_path(path);
+    update->mutable_entry()->mutable_value()->set_float_(value);
+    update->add_fields(kuksa::val::v1::FIELD_VALUE);
+
+    kuksa::val::v1::SetResponse response;
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::seconds(3));
+
+    return stub->Set(&context, request, &response).ok();
+}
+
+int main(int argc, char* argv[]) {
+    std::string target = "10.0.0.100:55555";
+    int interval = 2;
+
+    if (auto t = std::getenv("KUKSA_DATABROKER_ADDR")) target = t;
+    if (auto i = std::getenv("CHECK_INTERVAL"))        interval = std::atoi(i);
+    if (argc > 1) target   = argv[1];
+    if (argc > 2) interval = std::atoi(argv[2]);
+
+    const float soc_threshold = std::getenv("SOC_THRESHOLD")
+        ? std::atof(std::getenv("SOC_THRESHOLD"))
+        : SOC_THRESHOLD;
+
+    std::cout << "========================================" << std::endl;
+    std::cout << "  EV Range Extender" << std::endl;
+    std::cout << "  Version:       " << VERSION << std::endl;
+    std::cout << "  Databroker:    " << target << std::endl;
+    std::cout << "  Interval:      " << interval << "s" << std::endl;
+    std::cout << "  SoC threshold: " << soc_threshold << "%" << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout.flush();
+
+    auto channel = grpc::CreateChannel(target,
+                                       grpc::InsecureChannelCredentials());
+    auto stub = kuksa::val::v1::VAL::NewStub(channel);
+
+    for (int r = 1; r <= 15; r++) {
+        kuksa::val::v1::GetServerInfoRequest req;
+        kuksa::val::v1::GetServerInfoResponse resp;
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::seconds(3));
+        auto st = stub->GetServerInfo(&ctx, req, &resp);
+        if (st.ok()) {
+            std::cout << "[RangeExt] Connected: " << resp.name()
+                      << " " << resp.version() << std::endl;
+            break;
+        }
+        if (r == 15) {
+            std::cerr << "[RangeExt] Unreachable: " << target << std::endl;
+            return 1;
+        }
+        std::cout << "[RangeExt] Waiting (" << r << "/15)..." << std::endl;
+        std::cout.flush();
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+    }
+
+    std::string prev_mode = "";
+    int cycle = 0;
+
+    while (true) {
+        cycle++;
+
+        float soc  = get_signal(stub.get(),
+            "Vehicle.Powertrain.TractionBattery.StateOfCharge.Current");
+        float temp = get_signal(stub.get(),
+            "Vehicle.Cabin.HVAC.AmbientAirTemperature");
+
+        if (soc < 0) soc = 50.0f;
+
+        std::string mode;
+        float range;
+        float light_intensity;
+        float seat_heating;
+
+        if (soc < soc_threshold) {
+            mode = "POWER_SAVE";
+            range = soc * DEGRADED_EFFICIENCY;
+            light_intensity = 30.0f;
+            seat_heating = 0.0f;
+        } else {
+            mode = "NORMAL";
+            range = soc * NORMAL_EFFICIENCY;
+            light_intensity = 100.0f;
+            seat_heating = 1.0f;
+        }
+
+        set_signal(stub.get(), "Vehicle.Powertrain.Range", range);
+        set_signal(stub.get(),
+            "Vehicle.Cabin.Lights.AmbientLight.Intensity", light_intensity);
+        set_signal(stub.get(), "Vehicle.Cabin.Seat.Heating", seat_heating);
+
+        if (mode != prev_mode) {
+            std::cout << "[RangeExt] *** MODE CHANGE: " << mode << " ***"
+                      << std::endl;
+            prev_mode = mode;
+        }
+
+        if (cycle % 5 == 1) {
+            std::cout << "[RangeExt] cycle=" << cycle
+                      << " mode=" << mode
+                      << " SoC=" << soc << "%"
+                      << " Temp=" << (temp >= 0 ? std::to_string((int)temp) : "N/A") << "C"
+                      << " Range=" << range << "km"
+                      << " Lights=" << light_intensity
+                      << " SeatHeat=" << seat_heating
+                      << std::endl;
+            std::cout.flush();
+        }
+
+        std::this_thread::sleep_for(std::chrono::seconds(interval));
+    }
+    return 0;
+}`,
+    yaml: `publisher:
+    author: "developer@example.com"
+    company: "Example Corp"
+
+build:
+    os: linux
+    arch: x86_64
+    sign_pkcs12: aos-user-sp.p12
+    symlinks: copy
+
+publish:
+    url: aoscloud.io
+    service_uid: b1a2c3d4-e5f6-7890-abcd-ef1234567890
+    tls_pkcs12: aos-user-sp.p12
+    version: "1.0.0"
+
+configuration:
+    cmd: /ev-range-extender
+    workingDir: '/'
+    state:
+        filename: default_state.dat
+        required: true
+    instances:
+        minInstances: 1
+        priority: 0
+    isResourceLimits: true
+    requestedResources:
+        cpu: 2000
+        ram: 50MB
+        storage: 25MB
+        state: 512KB
+    quotas:
+        cpu: 2000
+        mem: 50MB
+        state: 512KB
+        storage: 25MB`
+  },
+
+  signalReporter: {
+    name: 'Signal Reporter',
+    appName: 'signal-reporter',
+    description: 'Subscribes to all signals on KUKSA and pushes updates to the dashboard via HTTP relay',
+    cpp: `#include <iostream>
+#include <string>
+#include <thread>
+#include <chrono>
+#include <cstdlib>
+#include <sstream>
+#include <cstring>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
+
+#include <grpcpp/grpcpp.h>
+#include "kuksa/val/v1/val.grpc.pb.h"
+#include "kuksa/val/v1/types.pb.h"
+
+#define VERSION "1.0.0"
+
+static std::string format_value(const kuksa::val::v1::Datapoint& dp) {
+    switch (dp.value_case()) {
+        case kuksa::val::v1::Datapoint::kFloat:
+            return std::to_string(dp.float_());
+        case kuksa::val::v1::Datapoint::kDouble:
+            return std::to_string(dp.double_());
+        case kuksa::val::v1::Datapoint::kInt32:
+            return std::to_string(dp.int32());
+        case kuksa::val::v1::Datapoint::kUint32:
+            return std::to_string(dp.uint32());
+        case kuksa::val::v1::Datapoint::kBool:
+            return dp.bool_() ? "true" : "false";
+        case kuksa::val::v1::Datapoint::kString:
+            return dp.string();
+        default:
+            return "null";
+    }
+}
+
+static bool http_post(const std::string& host, int port,
+                      const std::string& path, const std::string& body) {
+    struct addrinfo hints{}, *res;
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (getaddrinfo(host.c_str(), std::to_string(port).c_str(),
+                    &hints, &res) != 0)
+        return false;
+
+    int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (fd < 0) { freeaddrinfo(res); return false; }
+
+    struct timeval tv{2, 0};
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    if (connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
+        close(fd); freeaddrinfo(res); return false;
+    }
+    freeaddrinfo(res);
+
+    std::ostringstream req;
+    req << "POST " << path << " HTTP/1.1\\r\\n"
+        << "Host: " << host << ":" << port << "\\r\\n"
+        << "Content-Type: application/json\\r\\n"
+        << "Content-Length: " << body.size() << "\\r\\n"
+        << "Connection: close\\r\\n\\r\\n"
+        << body;
+
+    std::string s = req.str();
+    send(fd, s.c_str(), s.size(), 0);
+
+    char buf[256];
+    recv(fd, buf, sizeof(buf) - 1, 0);
+    close(fd);
+    return true;
+}
+
+static void parse_host_port(const std::string& url,
+                            std::string& host, int& port) {
+    auto colon = url.rfind(':');
+    if (colon != std::string::npos) {
+        host = url.substr(0, colon);
+        port = std::atoi(url.substr(colon + 1).c_str());
+    } else {
+        host = url;
+        port = 9100;
+    }
+}
+
+int main(int argc, char* argv[]) {
+    std::string kuksa_target = "10.0.0.100:55555";
+    std::string relay_url    = "10.0.0.1:9100";
+
+    if (auto t = std::getenv("KUKSA_DATABROKER_ADDR")) kuksa_target = t;
+    if (auto r = std::getenv("SIGNAL_RELAY_URL"))      relay_url    = r;
+    if (argc > 1) kuksa_target = argv[1];
+    if (argc > 2) relay_url    = argv[2];
+
+    std::string relay_host;
+    int relay_port;
+    parse_host_port(relay_url, relay_host, relay_port);
+
+    std::cout << "========================================" << std::endl;
+    std::cout << "  Signal Reporter" << std::endl;
+    std::cout << "  Version:    " << VERSION << std::endl;
+    std::cout << "  Databroker: " << kuksa_target << std::endl;
+    std::cout << "  Relay:      " << relay_host << ":" << relay_port << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout.flush();
+
+    auto channel = grpc::CreateChannel(kuksa_target,
+                                       grpc::InsecureChannelCredentials());
+    auto stub = kuksa::val::v1::VAL::NewStub(channel);
+
+    for (int r = 1; r <= 15; r++) {
+        kuksa::val::v1::GetServerInfoRequest req;
+        kuksa::val::v1::GetServerInfoResponse resp;
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() +
+                         std::chrono::seconds(3));
+        if (stub->GetServerInfo(&ctx, req, &resp).ok()) {
+            std::cout << "[Reporter] Connected: " << resp.name()
+                      << " " << resp.version() << std::endl;
+            break;
+        }
+        if (r == 15) {
+            std::cerr << "[Reporter] Unreachable: " << kuksa_target << std::endl;
+            return 1;
+        }
+        std::cout << "[Reporter] Waiting (" << r << "/15)..." << std::endl;
+        std::cout.flush();
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+    }
+
+    const char* paths[] = {
+        "Vehicle.Speed",
+        "Vehicle.Powertrain.TractionBattery.StateOfCharge.Current",
+        "Vehicle.Powertrain.Range",
+        "Vehicle.Cabin.HVAC.AmbientAirTemperature",
+        "Vehicle.Cabin.HVAC.TargetTemperature",
+        "Vehicle.Cabin.Lights.AmbientLight.Intensity",
+        "Vehicle.Cabin.Seat.Heating",
+        "Vehicle.Cabin.Seat.VentilationLevel",
+        "Vehicle.Infotainment.Display.Brightness"
+    };
+
+    kuksa::val::v1::SubscribeRequest sub_req;
+    for (const auto& p : paths) {
+        auto* entry = sub_req.add_entries();
+        entry->set_path(p);
+        entry->set_view(kuksa::val::v1::VIEW_CURRENT_VALUE);
+        entry->add_fields(kuksa::val::v1::FIELD_VALUE);
+    }
+
+    std::cout << "[Reporter] Subscribing to " << sub_req.entries_size()
+              << " signals..." << std::endl;
+    std::cout.flush();
+
+    int msg_count = 0;
+    int post_ok   = 0;
+    int post_fail = 0;
+
+    while (true) {
+        grpc::ClientContext ctx;
+        auto reader = stub->Subscribe(&ctx, sub_req);
+        kuksa::val::v1::SubscribeResponse response;
+
+        while (reader->Read(&response)) {
+            msg_count++;
+
+            for (const auto& update : response.updates()) {
+                const auto& path = update.entry().path();
+                std::string val  = format_value(update.entry().value());
+
+                auto now = std::chrono::system_clock::now();
+                auto ms  = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now.time_since_epoch()).count();
+
+                std::ostringstream json;
+                json << "{\\"signal\\":\\"" << path
+                     << "\\",\\"value\\":" << val
+                     << ",\\"ts\\":" << ms << "}";
+
+                if (http_post(relay_host, relay_port,
+                              "/signal", json.str())) {
+                    post_ok++;
+                } else {
+                    post_fail++;
+                }
+            }
+
+            if (msg_count % 50 == 0) {
+                std::cout << "[Reporter] msgs=" << msg_count
+                          << " posted=" << post_ok
+                          << " failed=" << post_fail << std::endl;
+                std::cout.flush();
+            }
+        }
+
+        auto status = reader->Finish();
+        std::cerr << "[Reporter] Stream ended: "
+                  << status.error_message() << std::endl;
+        std::cout << "[Reporter] Reconnecting in 5s..." << std::endl;
+        std::cout.flush();
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+    }
+    return 0;
+}`,
+    yaml: `publisher:
+    author: "developer@example.com"
+    company: "Example Corp"
+
+build:
+    os: linux
+    arch: x86_64
+    sign_pkcs12: aos-user-sp.p12
+    symlinks: copy
+
+publish:
+    url: aoscloud.io
+    service_uid: a9b8c7d6-e5f4-3210-fedc-ba0987654321
+    tls_pkcs12: aos-user-sp.p12
+    version: "1.0.0"
+
+configuration:
+    cmd: /signal-reporter
+    workingDir: '/'
+    state:
+        filename: default_state.dat
+        required: true
+    instances:
+        minInstances: 1
+        priority: 0
+    isResourceLimits: true
+    requestedResources:
+        cpu: 2000
+        ram: 50MB
+        storage: 25MB
+        state: 512KB
+    quotas:
+        cpu: 2000
+        mem: 50MB
+        state: 512KB
+        storage: 25MB`
   }
 }

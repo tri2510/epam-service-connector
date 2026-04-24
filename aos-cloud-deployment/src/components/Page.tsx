@@ -1098,7 +1098,9 @@ export default function Page({ data, config }: PluginProps) {
           React.createElement('option', { value: 'custom' }, 'Custom'),
           React.createElement('option', { value: 'helloAos' }, 'Hello AOS'),
           React.createElement('option', { value: 'kuksaWriter' }, 'KUKSA Writer'),
-          React.createElement('option', { value: 'kuksaReader' }, 'KUKSA Reader')
+          React.createElement('option', { value: 'kuksaReader' }, 'KUKSA Reader'),
+          React.createElement('option', { value: 'evRangeExtender' }, 'EV Range Extender'),
+          React.createElement('option', { value: 'signalReporter' }, 'Signal Reporter')
         ),
         React.createElement('input', {
           type: 'text',

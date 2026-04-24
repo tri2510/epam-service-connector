@@ -1,0 +1,36 @@
+publisher:
+    author: "developer@example.com"
+    company: "Example Corp"
+
+build:
+    os: linux
+    arch: x86_64
+    sign_pkcs12: aos-user-sp.p12
+    symlinks: copy
+
+publish:
+    url: aoscloud.io
+    service_uid: ea27e7d8-2317-48ba-8cc4-ae299c26d2c3
+    tls_pkcs12: aos-user-sp.p12
+    version: "1.0.0"
+
+configuration:
+    cmd: /signal-writer
+    workingDir: '/'
+    state:
+        filename: default_state.dat
+        required: true
+    instances:
+        minInstances: 1
+        priority: 0
+    isResourceLimits: true
+    requestedResources:
+        cpu: 2000
+        ram: 50MB
+        storage: 25MB
+        state: 512KB
+    quotas:
+        cpu: 2000
+        mem: 50MB
+        state: 512KB
+        storage: 25MB
