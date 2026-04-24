@@ -130,19 +130,49 @@ Requires `protobuf-compiler`, `libgrpc++-dev`, `libprotobuf-dev`.
 - AosCloud account with SP certificate (`.p12` file)
 - Python 3.10+ with pip
 
-### Step 1 — Start two KUKSA Databrokers
+### Step 1 — Generate merged VSS metadata (one time)
+
+The blueprint uses custom signal paths not in stock VSS 5.1. Run once to
+generate the merged metadata file used by both databrokers:
+
+```bash
+cd sdv-blueprint
+python3 -c "
+import json, sys
+with open('/tmp/vss_base.json' if __import__('os').path.exists('/tmp/vss_base.json') else 'vss-merged.json') as f: base = json.load(f)
+with open('vss-overlay.json') as f: overlay = json.load(f)
+def merge(b, o):
+    for k, v in o.items():
+        if k in b and isinstance(b[k], dict) and isinstance(v, dict): merge(b[k], v)
+        else: b[k] = v
+merge(base, overlay)
+with open('vss-merged.json', 'w') as f: json.dump(base, f)
+print('vss-merged.json written')
+"
+```
+
+Or simply extract the base from the image first:
+```bash
+docker create --name tmp ghcr.io/eclipse-kuksa/kuksa-databroker:latest
+docker cp tmp:/vss_release_5.1.json /tmp/vss_base.json
+docker rm tmp
+```
+
+### Step 2 — Start two KUKSA Databrokers
 
 ```bash
 # HPC KUKSA (port 55555)
 docker run -d --rm --name kuksa-hpc --network host \
-  ghcr.io/eclipse-kuksa/kuksa-databroker:latest --insecure --port 55555
+  -v "$(pwd)/vss-merged.json:/vss.json:ro" \
+  ghcr.io/eclipse-kuksa/kuksa-databroker:latest --insecure --port 55555 --metadata /vss.json
 
 # Zonal KUKSA (port 55556)
 docker run -d --rm --name kuksa-zonal --network host \
-  ghcr.io/eclipse-kuksa/kuksa-databroker:latest --insecure --port 55556
+  -v "$(pwd)/vss-merged.json:/vss.json:ro" \
+  ghcr.io/eclipse-kuksa/kuksa-databroker:latest --insecure --port 55556 --metadata /vss.json
 ```
 
-### Step 2 — Start the KUKSA-to-KUKSA bridge
+### Step 3 — Start the KUKSA-to-KUKSA bridge
 
 ```bash
 cd sdv-blueprint/kuksa-sync
@@ -150,7 +180,7 @@ pip install -r requirements.txt
 ZONAL_KUKSA_ADDR=localhost:55556 HPC_KUKSA_ADDR=localhost:55555 python3 kuksa-bridge.py
 ```
 
-### Step 3 — Start the End ECU simulator
+### Step 4 — Start the End ECU simulator
 
 ```bash
 cd sdv-blueprint/end-simulator
@@ -158,7 +188,7 @@ pip install -r requirements.txt
 KUKSA_ADDR=localhost:55556 python3 simulator.py
 ```
 
-### Step 4 — Start the broadcaster with signal relay
+### Step 5 — Start the broadcaster with signal relay
 
 ```bash
 # Build the toolchain Docker image (if not already built)
@@ -181,12 +211,12 @@ docker run -d --network host \
   sh -c "python3 /usr/local/bin/init-certs.py && exec node /usr/local/bin/aos-broadcaster.js"
 ```
 
-### Step 5 — Open the dashboard
+### Step 6 — Open the dashboard
 
 Open `sdv-blueprint/dashboard/index.html` in your browser.
 Enter your broadcaster instance ID and click Connect.
 
-### Step 6 — Deploy AOS services
+### Step 7 — Deploy AOS services
 
 Use the existing standalone UI (`aos-cloud-deployment/standalone.html`) or the
 new dashboard to deploy:
@@ -195,7 +225,7 @@ new dashboard to deploy:
 2. **EV Range Extender** (to HPC VM) — reads SoC, computes Range, actuates
 3. **Signal Reporter** (to HPC VM) — subscribes to all signals, pushes to dashboard
 
-### Step 7 — Watch the demo
+### Step 8 — Watch the demo
 
 - Dashboard shows live signals from all three nodes
 - When SoC drops below 20%, EV Range Extender switches to POWER_SAVE
@@ -210,6 +240,7 @@ sdv-blueprint/
 ├── docker-compose.yml              ← one-command demo launch
 ├── Dockerfile.python               ← image for Python services
 ├── Makefile                        ← local C++ build (make protos && make all)
+├── vss-overlay.json                ← custom VSS paths (merged into vss-merged.json)
 ├── presets/
 │   ├── signal-writer.cpp           ← Signal Writer C++ source (Zonal)
 │   ├── signal-writer.yaml          ← AOS service config

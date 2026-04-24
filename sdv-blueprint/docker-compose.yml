@@ -21,27 +21,19 @@ services:
     image: ghcr.io/eclipse-kuksa/kuksa-databroker:latest
     container_name: kuksa-hpc
     network_mode: host
-    command: ["--insecure", "--port", "55555"]
+    command: ["--insecure", "--port", "55555", "--metadata", "/vss.json"]
+    volumes:
+      - ./vss-merged.json:/vss.json:ro
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "grpc_health_probe -addr=:55555 || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
 
   kuksa-zonal:
     image: ghcr.io/eclipse-kuksa/kuksa-databroker:latest
     container_name: kuksa-zonal
     network_mode: host
-    command: ["--insecure", "--port", "55556"]
+    command: ["--insecure", "--port", "55556", "--metadata", "/vss.json"]
+    volumes:
+      - ./vss-merged.json:/vss.json:ro
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "grpc_health_probe -addr=:55556 || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
 
   # ── Python services ────────────────────────────────────────────────
 
