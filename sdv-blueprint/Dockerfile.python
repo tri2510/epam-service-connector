@@ -7,3 +7,4 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY kuksa-sync/ /app/kuksa-sync/
 COPY end-simulator/ /app/end-simulator/
+COPY signal-reporter/ /app/signal-reporter/

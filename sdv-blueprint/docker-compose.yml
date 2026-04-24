@@ -69,6 +69,22 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  signal-reporter:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    container_name: signal-reporter
+    network_mode: host
+    environment:
+      - HPC_KUKSA_ADDR=localhost:55555
+      - RELAY_HOST=localhost
+      - RELAY_PORT=9100
+    command: ["python3", "/app/signal-reporter/reporter.py"]
+    depends_on:
+      kuksa-hpc:
+        condition: service_started
+    restart: unless-stopped
+
   # ── Broadcaster with signal relay ──────────────────────────────────
   # Requires the aos-edge-toolchain image to be pre-built.
   # Uncomment and configure the section below when ready.

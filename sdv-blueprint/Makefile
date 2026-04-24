@@ -18,7 +18,8 @@ GRPC_FLAGS        := $(shell pkg-config --cflags --libs grpc++ protobuf 2>/dev/n
 PROTOC            := protoc
 GRPC_PLUGIN       := $(shell which grpc_cpp_plugin 2>/dev/null || echo /usr/bin/grpc_cpp_plugin)
 
-TARGETS := signal-writer ev-range-extender signal-reporter
+BUILD_DIR := build
+TARGETS := $(BUILD_DIR)/signal-writer $(BUILD_DIR)/ev-range-extender $(BUILD_DIR)/signal-reporter
 
 .PHONY: all clean protos
 
@@ -62,16 +63,19 @@ PROTO_SRCS := $(PROTO_DIR)/kuksa/val/v1/types.pb.cc \
 
 # ── Build targets ───────────────────────────────────────────────────
 
-signal-writer: presets/signal-writer.cpp $(PROTO_SRCS)
+$(BUILD_DIR)/signal-writer: presets/signal-writer.cpp $(PROTO_SRCS)
+	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I$(PROTO_DIR) $^ $(GRPC_FLAGS) -o $@
 
-ev-range-extender: presets/ev-range-extender.cpp $(PROTO_SRCS)
+$(BUILD_DIR)/ev-range-extender: presets/ev-range-extender.cpp $(PROTO_SRCS)
+	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I$(PROTO_DIR) $^ $(GRPC_FLAGS) -o $@
 
-signal-reporter: presets/signal-reporter.cpp $(PROTO_SRCS)
+$(BUILD_DIR)/signal-reporter: presets/signal-reporter.cpp $(PROTO_SRCS)
+	@mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I$(PROTO_DIR) $^ $(GRPC_FLAGS) -o $@
 
 # ── Clean ───────────────────────────────────────────────────────────
 
 clean:
-	rm -rf $(PROTO_DIR) $(TARGETS)
+	rm -rf $(PROTO_DIR) $(BUILD_DIR)

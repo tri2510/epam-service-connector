@@ -55,6 +55,7 @@ the EV Range Extender app, and appear live on a standalone browser dashboard.
 | Signal Writer | `presets/signal-writer.cpp` | C++ (gRPC) | AosCloud OTA → Zonal VM |
 | EV Range Extender | `presets/ev-range-extender.cpp` | C++ (gRPC) | AosCloud OTA → HPC VM |
 | Signal Reporter | `presets/signal-reporter.cpp` | C++ (gRPC + HTTP) | AosCloud OTA → HPC VM |
+| Signal Reporter (Python) | `signal-reporter/reporter.py` | Python (gRPC + HTTP) | Standalone process (local demo) |
 | KUKSA-to-KUKSA Bridge | `kuksa-sync/kuksa-bridge.py` | Python (gRPC) | Standalone process |
 | End ECU Simulator | `end-simulator/simulator.py` | Python (gRPC) | Standalone process |
 | Standalone Dashboard | `dashboard/standalone.html` | React/TypeScript | `npm run standalone:dev` on :3012 |
@@ -153,9 +154,9 @@ docker run -d --rm --name kuksa-zonal --network host \
 
 **Verify:** `docker logs kuksa-hpc 2>&1 | grep Listening` should show `Listening on 0.0.0.0:55555`.
 
-### A3 — Start the KUKSA bridge + End simulator
+### A3 — Start the KUKSA bridge + End simulator + Signal Writer
 
-Open two terminals:
+Open three terminals:
 
 ```bash
 # Terminal 1 — Bridge (syncs Zonal → HPC)
@@ -165,35 +166,17 @@ ZONAL_KUKSA_ADDR=localhost:55556 HPC_KUKSA_ADDR=localhost:55555 python3 kuksa-br
 ```
 
 ```bash
-# Terminal 2 — End ECU simulator
+# Terminal 2 — End ECU simulator (writes TargetTemp, Brightness, VentLevel)
 cd sdv-blueprint/end-simulator
 pip install -r requirements.txt
 KUKSA_ADDR=localhost:55556 python3 simulator.py
 ```
 
-**Verify:** Bridge shows `Subscribing to 6 signals on Zonal...` and simulator shows `[EndSim] t=0`.
-
-### A4 — Open the dashboard
-
 ```bash
-cd sdv-blueprint/dashboard
-npm install
-npm run standalone:dev
-```
-
-Open http://localhost:3012/standalone.html in your browser.
-The broadcaster instance ID `AET-TOOLCHAIN-001` is pre-filled. Click **Connect**.
-
-**Verify:** Green dot shows "Connected". Signal gauges for Target Temp, Display,
-and Seat Vent should show values. Speed, SoC, Ambient Temp will show values
-after a Signal Writer is running (see Part B, or run one locally — see A5).
-
-### A5 — (Optional) Run a local Signal Writer
-
-To see all 9 gauges without deploying to AosCloud, run a Python Signal Writer:
-
-```bash
-KUKSA_ADDR=localhost:55556 python3 -c "
+# Terminal 3 — Local Signal Writer (writes Speed, SoC, AmbientTemp)
+cd sdv-blueprint
+pip install kuksa-client grpcio
+python3 -c "
 import grpc, time, math
 from kuksa.val.v1 import val_pb2, val_pb2_grpc, types_pb2
 stub = val_pb2_grpc.VALStub(grpc.insecure_channel('localhost:55556'))
@@ -212,8 +195,76 @@ while True:
 "
 ```
 
-**Verify:** Reconnect the dashboard (click Connect again). Speed, SoC, and
-Ambient Temp gauges now show live values.
+**Verify:** Bridge shows `Subscribing to 6 signals on Zonal...`, simulator
+shows `[EndSim] t=0`, and the Signal Writer runs without errors.
+
+### A4 — Start the broadcaster
+
+The broadcaster relays signals from KUKSA to the dashboard via Socket.IO.
+It requires the `aos-edge-toolchain` Docker image.
+
+```bash
+# Build the image (first time only)
+cd aos-edge-toolchain
+docker build -t aos-edge-toolchain:latest .
+
+# Start the broadcaster with signal relay
+docker run -d --network host \
+  --name aos-broadcaster \
+  --entrypoint "" \
+  -v "$(pwd)/scripts/aos-broadcaster.js:/usr/local/bin/aos-broadcaster.js:ro" \
+  -e INSTANCE_ID=AET-TOOLCHAIN-001 \
+  -e INSTANCE_NAME="AOS Edge Toolchain" \
+  -e KIT_MANAGER_URL=https://kit.digitalauto.tech \
+  -e SIGNAL_RELAY_PORT=9100 \
+  -e NODE_TLS_REJECT_UNAUTHORIZED=0 \
+  aos-edge-toolchain:latest \
+  sh -c "exec node /usr/local/bin/aos-broadcaster.js"
+```
+
+If the Docker build fails (network issues), you can volume-mount the script
+into an existing `aos-edge-toolchain` image:
+
+```bash
+docker run -d --network host \
+  --name aos-broadcaster \
+  -v "$(pwd)/scripts/aos-broadcaster.js:/usr/local/bin/aos-broadcaster.js:ro" \
+  --entrypoint node \
+  aos-edge-toolchain:proxy \
+  /usr/local/bin/aos-broadcaster.js
+```
+
+**Verify:** `docker logs aos-broadcaster 2>&1 | grep -E 'Connected|SignalRelay'`
+should show `Connected to Kit Manager` and `SignalRelay HTTP listener on port 9100`.
+
+### A5 — Start the Signal Reporter
+
+The Signal Reporter subscribes to all 9 signals on HPC KUKSA and pushes them
+to the broadcaster's relay endpoint, which forwards them to the dashboard.
+
+```bash
+cd sdv-blueprint/signal-reporter
+pip install -r requirements.txt
+HPC_KUKSA_ADDR=localhost:55555 python3 reporter.py
+```
+
+**Verify:** Shows `Subscribing to 9 signals...` then `signals=50 ok=50 fail=0`.
+
+### A6 — Open the dashboard
+
+```bash
+cd sdv-blueprint/dashboard
+npm install
+npm run standalone:dev
+```
+
+Open http://localhost:3012/standalone.html in your browser.
+The broadcaster instance ID `AET-TOOLCHAIN-001` is pre-filled. Click **Connect**.
+
+**Verify:** Green dot shows "Connected". All 6 Zonal/End signal gauges
+(Speed, SoC, Ambient Temp, Target Temp, Display, Seat Vent) should show
+live values. Range, Lights, and Seat Heat remain "--" because the
+EV Range Extender C++ service only runs on real hardware (see Part B).
 
 ---
 
@@ -353,6 +404,9 @@ sdv-blueprint/
 │   ├── index.html                  ← simple file:// version (no build needed)
 │   ├── dashboard.js                ← vanilla JS version
 │   └── dashboard.css               ← dark theme styling
+├── signal-reporter/
+│   ├── reporter.py                 ← Python Signal Reporter (local demo)
+│   └── requirements.txt
 ├── end-simulator/
 │   ├── simulator.py                ← End ECU sensor simulator
 │   └── requirements.txt
