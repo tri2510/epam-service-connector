@@ -18,15 +18,29 @@
 #include <cstdlib>
 #include <cmath>
 #include <atomic>
+#include <fstream>
+#include <sstream>
 
 #include <grpcpp/grpcpp.h>
+#include <grpcpp/security/credentials.h>
 #include "kuksa/val/v1/val.grpc.pb.h"
 #include "kuksa/val/v1/types.pb.h"
 
-#define VERSION "1.0.0"
+#define VERSION "1.0.4"
 #define SOC_THRESHOLD 20.0f
 #define NORMAL_EFFICIENCY 5.5f
 #define DEGRADED_EFFICIENCY 4.0f
+
+static std::string read_file(const std::string& path) {
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        std::cerr << "[RangeExt] Failed to open: " << path << std::endl;
+        return "";
+    }
+    std::stringstream buffer;
+    buffer << f.rdbuf();
+    return buffer.str();
+}
 
 static float get_signal(kuksa::val::v1::VAL::Stub* stub,
                         const std::string& path) {
@@ -73,9 +87,11 @@ static bool set_signal(kuksa::val::v1::VAL::Stub* stub,
 int main(int argc, char* argv[]) {
     std::string target = "10.0.0.100:55555";
     int interval = 2;
+    std::string ca_path = "/etc/kuksa-val/CA.pem";
 
     if (auto t = std::getenv("KUKSA_DATABROKER_ADDR")) target = t;
     if (auto i = std::getenv("CHECK_INTERVAL"))        interval = std::atoi(i);
+    if (auto c = std::getenv("KUKSA_CA_CERT"))         ca_path = c;
     if (argc > 1) target   = argv[1];
     if (argc > 2) interval = std::atoi(argv[2]);
 
@@ -89,11 +105,25 @@ int main(int argc, char* argv[]) {
     std::cout << "  Databroker:    " << target << std::endl;
     std::cout << "  Interval:      " << interval << "s" << std::endl;
     std::cout << "  SoC threshold: " << soc_threshold << "%" << std::endl;
+    std::cout << "  TLS:           Enabled" << std::endl;
+    std::cout << "  CA Cert:       " << ca_path << std::endl;
     std::cout << "========================================" << std::endl;
     std::cout.flush();
 
-    auto channel = grpc::CreateChannel(target,
-                                       grpc::InsecureChannelCredentials());
+    // Load TLS certificate
+    std::string ca_cert = read_file(ca_path);
+    if (ca_cert.empty()) {
+        std::cerr << "[RangeExt] ERROR: Cannot read CA certificate" << std::endl;
+        return 1;
+    }
+
+    // Create TLS credentials
+    grpc::SslCredentialsOptions ssl_opts;
+    ssl_opts.pem_root_certs = ca_cert;
+    auto creds = grpc::SslCredentials(ssl_opts);
+
+    // Create secure channel
+    auto channel = grpc::CreateChannel(target, creds);
     auto stub = kuksa::val::v1::VAL::NewStub(channel);
 
     // Wait for databroker
@@ -105,7 +135,7 @@ int main(int argc, char* argv[]) {
                          std::chrono::seconds(3));
         auto st = stub->GetServerInfo(&ctx, req, &resp);
         if (st.ok()) {
-            std::cout << "[RangeExt] Connected: " << resp.name()
+            std::cout << "[RangeExt] Connected (TLS): " << resp.name()
                       << " " << resp.version() << std::endl;
             break;
         }

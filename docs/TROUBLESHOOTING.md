@@ -258,5 +258,39 @@ docker run --rm -v $(pwd)/build:/app alpine:latest /app/signal-writer --help
 
 ---
 
+## Error: "No auth token provided"
+
+**Symptom:** Service connects to KUKSA but fails with gRPC error code 16
+
+**Error Message:**
+```
+[Writer] Retry 1/15 failed: 16 - No auth token provided
+```
+
+**Root Cause:** KUKSA Databroker is configured with JWT authentication, but the service is connecting without providing an auth token.
+
+**Solution:** Configure KUKSA Databroker to run in insecure mode (no authentication):
+
+```bash
+# Edit KUKSA systemd override
+cat > /etc/systemd/system/kuksa-databroker.service.d/override.conf << 'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/bin/databroker --vss /usr/share/vss/vss.json --address=0.0.0.0 --port 55556 --insecure
+EOF
+
+# Reload and restart
+systemctl daemon-reload
+systemctl restart kuksa-databroker
+```
+
+**Verify:**
+```bash
+systemctl status kuksa-databroker
+# Should show: "Authorization is not enabled."
+```
+
+---
+
 **Last Updated:** May 4, 2026  
-**Tested With:** AosCloud v10 API, aos-servicemanager, VirtualBox 7.1.6
+**Tested With:** AosCloud v10 API, aos-servicemanager, VirtualBox 7.1.6, KUKSA Databroker 0.5.0

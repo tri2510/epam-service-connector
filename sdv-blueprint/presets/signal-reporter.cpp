@@ -16,16 +16,29 @@
 #include <chrono>
 #include <cstdlib>
 #include <sstream>
+#include <fstream>
 #include <cstring>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
 
 #include <grpcpp/grpcpp.h>
+#include <grpcpp/security/credentials.h>
 #include "kuksa/val/v1/val.grpc.pb.h"
 #include "kuksa/val/v1/types.pb.h"
 
-#define VERSION "1.0.0"
+#define VERSION "1.0.4"
+
+static std::string read_file(const std::string& path) {
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        std::cerr << "[Reporter] Failed to open: " << path << std::endl;
+        return "";
+    }
+    std::stringstream buffer;
+    buffer << f.rdbuf();
+    return buffer.str();
+}
 
 static std::string format_value(const kuksa::val::v1::Datapoint& dp) {
     switch (dp.value_case()) {
@@ -102,9 +115,11 @@ static void parse_host_port(const std::string& url,
 int main(int argc, char* argv[]) {
     std::string kuksa_target = "10.0.0.100:55555";
     std::string relay_url    = "10.0.0.1:9100";
+    std::string ca_path      = "/etc/kuksa-val/CA.pem";
 
     if (auto t = std::getenv("KUKSA_DATABROKER_ADDR")) kuksa_target = t;
     if (auto r = std::getenv("SIGNAL_RELAY_URL"))      relay_url    = r;
+    if (auto c = std::getenv("KUKSA_CA_CERT"))         ca_path      = c;
     if (argc > 1) kuksa_target = argv[1];
     if (argc > 2) relay_url    = argv[2];
 
@@ -117,11 +132,25 @@ int main(int argc, char* argv[]) {
     std::cout << "  Version:    " << VERSION << std::endl;
     std::cout << "  Databroker: " << kuksa_target << std::endl;
     std::cout << "  Relay:      " << relay_host << ":" << relay_port << std::endl;
+    std::cout << "  TLS:        Enabled" << std::endl;
+    std::cout << "  CA Cert:    " << ca_path << std::endl;
     std::cout << "========================================" << std::endl;
     std::cout.flush();
 
-    auto channel = grpc::CreateChannel(kuksa_target,
-                                       grpc::InsecureChannelCredentials());
+    // Load TLS certificate
+    std::string ca_cert = read_file(ca_path);
+    if (ca_cert.empty()) {
+        std::cerr << "[Reporter] ERROR: Cannot read CA certificate" << std::endl;
+        return 1;
+    }
+
+    // Create TLS credentials
+    grpc::SslCredentialsOptions ssl_opts;
+    ssl_opts.pem_root_certs = ca_cert;
+    auto creds = grpc::SslCredentials(ssl_opts);
+
+    // Create secure channel
+    auto channel = grpc::CreateChannel(kuksa_target, creds);
     auto stub = kuksa::val::v1::VAL::NewStub(channel);
 
     // Wait for databroker
@@ -132,7 +161,7 @@ int main(int argc, char* argv[]) {
         ctx.set_deadline(std::chrono::system_clock::now() +
                          std::chrono::seconds(3));
         if (stub->GetServerInfo(&ctx, req, &resp).ok()) {
-            std::cout << "[Reporter] Connected: " << resp.name()
+            std::cout << "[Reporter] Connected (TLS): " << resp.name()
                       << " " << resp.version() << std::endl;
             break;
         }

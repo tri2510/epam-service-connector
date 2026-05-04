@@ -7,9 +7,11 @@ import time
 import math
 from kuksa.val.v1 import val_pb2, val_pb2_grpc, types_pb2
 
-stub = val_pb2_grpc.VALStub(grpc.insecure_channel('localhost:55556'))
+import os
+target = os.getenv('KUKSA_DATABROKER_ADDR', '172.17.0.1:55556')
+stub = val_pb2_grpc.VALStub(grpc.insecure_channel(target))
 
-print("[SignalWriter] Connected to Zonal KUKSA (localhost:55556)")
+print(f"[SignalWriter] Connected to Zonal KUKSA ({target})")
 print("[SignalWriter] Writing: Speed, SoC, AmbientAirTemperature")
 
 t = 0

@@ -18,12 +18,26 @@
 #include <chrono>
 #include <cstdlib>
 #include <cmath>
+#include <fstream>
+#include <sstream>
 
 #include <grpcpp/grpcpp.h>
+#include <grpcpp/security/credentials.h>
 #include "kuksa/val/v1/val.grpc.pb.h"
 #include "kuksa/val/v1/types.pb.h"
 
-#define VERSION "1.0.0"
+#define VERSION "1.0.9"
+
+static std::string read_file(const std::string& path) {
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        std::cerr << "[Writer] Failed to open: " << path << std::endl;
+        return "";
+    }
+    std::stringstream buffer;
+    buffer << f.rdbuf();
+    return buffer.str();
+}
 
 static bool set_signal(kuksa::val::v1::VAL::Stub* stub,
                        const std::string& path, float value) {
@@ -44,9 +58,11 @@ static bool set_signal(kuksa::val::v1::VAL::Stub* stub,
 int main(int argc, char* argv[]) {
     std::string target = "10.0.0.100:55556";
     int interval = 2;
+    std::string ca_path = "/etc/kuksa-val/CA.pem";
 
     if (auto t = std::getenv("KUKSA_DATABROKER_ADDR")) target = t;
     if (auto i = std::getenv("WRITE_INTERVAL"))        interval = std::atoi(i);
+    if (auto c = std::getenv("KUKSA_CA_CERT"))         ca_path = c;
     if (argc > 1) target   = argv[1];
     if (argc > 2) interval = std::atoi(argv[2]);
 
@@ -55,11 +71,12 @@ int main(int argc, char* argv[]) {
     std::cout << "  Version:    " << VERSION << std::endl;
     std::cout << "  Databroker: " << target << std::endl;
     std::cout << "  Interval:   " << interval << "s" << std::endl;
+    std::cout << "  TLS:        Disabled (insecure)" << std::endl;
     std::cout << "========================================" << std::endl;
     std::cout.flush();
 
-    auto channel = grpc::CreateChannel(target,
-                                       grpc::InsecureChannelCredentials());
+    // Create insecure channel
+    auto channel = grpc::CreateChannel(target, grpc::InsecureChannelCredentials());
     auto stub = kuksa::val::v1::VAL::NewStub(channel);
 
     // Wait for databroker
@@ -75,39 +92,37 @@ int main(int argc, char* argv[]) {
                       << " " << resp.version() << std::endl;
             break;
         }
+
+        std::cerr << "[Writer] Retry " << r << "/15 failed: "
+                  << st.error_code() << " - " << st.error_message() << std::endl;
+
         if (r == 15) {
             std::cerr << "[Writer] Unreachable: " << target << std::endl;
             return 1;
         }
-        std::cout << "[Writer] Waiting (" << r << "/15)..." << std::endl;
-        std::cout.flush();
         std::this_thread::sleep_for(std::chrono::seconds(2));
     }
 
+    // Write signals
     int t = 0;
     while (true) {
         float speed = 40.0f + 30.0f * std::sin(t * 0.1f);
-        float temp  = 22.0f +  5.0f * std::sin(t * 0.05f);
-        // SoC drains slowly from 80 → 0, then wraps back to 80
-        float soc   = std::fmax(0.0f, std::fmin(100.0f,
-                      80.0f - std::fmod(t * 0.1f, 80.0f)));
+        float soc   = std::max(0.0f, 80.0f - std::fmod(t * 0.1f, 80.0f));
+        float temp  = 22.0f + 5.0f * std::sin(t * 0.05f);
 
         set_signal(stub.get(), "Vehicle.Speed", speed);
-        set_signal(stub.get(),
-            "Vehicle.Cabin.HVAC.AmbientAirTemperature", temp);
-        set_signal(stub.get(),
-            "Vehicle.Powertrain.TractionBattery.StateOfCharge.Current", soc);
+        set_signal(stub.get(), "Vehicle.Powertrain.TractionBattery.StateOfCharge.Current", soc);
+        set_signal(stub.get(), "Vehicle.Cabin.HVAC.AmbientAirTemperature", temp);
 
-        if (t % 5 == 0) {
-            std::cout << "[Writer] t=" << t
-                      << " Speed=" << speed
-                      << " Temp=" << temp
-                      << " SoC=" << soc << std::endl;
+        if (t % 10 == 0) {
+            std::cout << "[Writer] t=" << t << "  Speed=" << speed
+                      << "  SoC=" << soc << std::endl;
             std::cout.flush();
         }
 
         t++;
         std::this_thread::sleep_for(std::chrono::seconds(interval));
     }
+
     return 0;
 }

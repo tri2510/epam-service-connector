@@ -13,10 +13,10 @@ This repository contains two main components:
 
 **Full guide:** [sdv-blueprint/README.md](sdv-blueprint/README.md)
 
-**Deployed Services (v1.0.1):**
-- Signal Writer → Zonal-Unit (writes Speed, SoC, Temperature)
-- EV Range Extender → HPC-Unit (battery management, power-saving mode)
-- Signal Reporter → HPC-Unit (relays signals to dashboard)
+**Deployed Services (v1.0.9):**
+- Signal Writer → Zonal-Unit (writes Speed, SoC, Temperature) - **RUNNING**
+- EV Range Extender → HPC-Unit (battery management, power-saving mode) - Static binary ready
+- Signal Reporter → HPC-Unit (relays signals to dashboard) - Static binary ready
 
 **Documentation:**
 - [C++ Deployment Log](docs/CPP_DEPLOYMENT_LOG.md) - Complete build & deployment process
