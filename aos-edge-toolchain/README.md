@@ -475,3 +475,48 @@ docker build -t aos-edge-toolchain .
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+## Building Static C++ Services
+
+The base `aos-edge-toolchain:latest` image does **NOT** include C++ build tools.
+
+For Eclipse SDV Blueprint or other C++ projects requiring gRPC/protobuf:
+
+### Option 1: Use Enhanced Builder Image (Recommended)
+
+```bash
+# Build the enhanced image (one time)
+cd aos-edge-toolchain
+docker build -f Dockerfile.builder -t aos-edge-toolchain:builder .
+
+# Use it for builds
+docker run --rm \
+    -v $(pwd)/../sdv-blueprint:/workspace/sdv-blueprint \
+    aos-edge-toolchain:builder \
+    bash -c "cd /workspace/sdv-blueprint && make all"
+```
+
+### Option 2: Install Build Tools Manually
+
+Run `setup-build-env.sh` inside the container:
+
+```bash
+docker exec aos-broadcaster bash < setup-build-env.sh
+```
+
+**Note:** This must be repeated if the container is recreated.
+
+---
+
+## What's Included in Builder Image
+
+- **Base tools:** ARM64 cross-compiler, aos-signer, broadcaster
+- **C++ Build:**
+  - protobuf-compiler + gRPC plugin
+  - Static libraries: libgrpc++, libprotobuf, libabsl, libc-ares, libssl
+  - pkg-config for dependency detection
+  
+**Ready to build static binaries for AOS deployment.**
+

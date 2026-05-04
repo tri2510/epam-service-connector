@@ -10,9 +10,9 @@ build:
 
 publish:
     url: aoscloud.io
-    service_uid: a9b8c7d6-e5f4-3210-fedc-ba0987654321
+    service_uid: 242dd4d4-7236-432d-88b9-ba9bbb3288f8
     tls_pkcs12: aos-user-sp.p12
-    version: "1.0.0"
+    version: "1.0.1"
 
 configuration:
     cmd: /signal-reporter
@@ -25,12 +25,12 @@ configuration:
         priority: 0
     isResourceLimits: true
     requestedResources:
-        cpu: 2000
-        ram: 50MB
-        storage: 25MB
+        cpu: 1000
+        ram: 10MB
+        storage: 5MB
         state: 512KB
     quotas:
-        cpu: 2000
-        mem: 50MB
+        cpu: 1000
+        mem: 10MB
         state: 512KB
-        storage: 25MB
+        storage: 5MB

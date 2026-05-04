@@ -38,9 +38,7 @@ services:
   # ── Python services ────────────────────────────────────────────────
 
   kuksa-bridge:
-    build:
-      context: .
-      dockerfile: Dockerfile.python
+    image: sdv-blueprint-python:latest
     container_name: kuksa-bridge
     network_mode: host
     environment:
@@ -55,9 +53,7 @@ services:
     restart: unless-stopped
 
   end-simulator:
-    build:
-      context: .
-      dockerfile: Dockerfile.python
+    image: sdv-blueprint-python:latest
     container_name: end-simulator
     network_mode: host
     environment:
@@ -70,9 +66,7 @@ services:
     restart: unless-stopped
 
   signal-reporter:
-    build:
-      context: .
-      dockerfile: Dockerfile.python
+    image: sdv-blueprint-python:latest
     container_name: signal-reporter
     network_mode: host
     environment:

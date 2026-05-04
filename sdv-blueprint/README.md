@@ -414,3 +414,31 @@ sdv-blueprint/
     ├── kuksa-bridge.py             ← KUKSA Zonal→HPC signal sync
     └── requirements.txt
 ```
+
+---
+
+## Troubleshooting
+
+### Service Deployment Errors
+
+If services show `status=failed` in AosCloud after deployment, see:
+
+**[Complete Troubleshooting Guide](../docs/TROUBLESHOOTING.md)**
+
+**Common Issue:** C++ binaries are dynamically linked and require shared libraries not available in AOS containers.
+
+**Quick Fix:** Use Python services instead (already available in this repo):
+- `signal-writer.py` - Python version of Signal Writer
+- `signal-reporter/reporter.py` - Python version of Signal Reporter
+
+Python services work out-of-the-box with the `aos-pylibs-layer`.
+
+---
+
+## Documentation
+
+- [Troubleshooting Guide](../docs/TROUBLESHOOTING.md) - Common errors and solutions
+- [C++ Deployment Log](../docs/CPP_DEPLOYMENT_LOG.md) - Build and deployment process
+- [Bridge Status](../docs/BRIDGE_STATUS.md) - KUKSA bridge setup
+- [Created Services](../docs/CREATED_SERVICES.md) - Service UUIDs and details
+

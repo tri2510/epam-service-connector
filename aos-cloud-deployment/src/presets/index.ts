@@ -77,9 +77,9 @@ configuration:
   },
 
   kuksaWriter: {
-    name: 'KUKSA Writer',
-    appName: 'kuksa-writer',
-    description: 'Writes simulated vehicle signals to KUKSA Databroker via gRPC Set() every 2s',
+    name: 'Signal Writer - Zonal Domain',
+    appName: 'signal-writer',
+    description: 'Writes Speed, SoC, AmbientTemp to KUKSA Databroker on Zonal node',
     cpp: `#include <iostream>
 #include <string>
 #include <thread>
@@ -176,7 +176,7 @@ build:
 
 publish:
     url: aoscloud.io
-    service_uid: ea27e7d8-2317-48ba-8cc4-ae299c26d2c3
+    service_uid: 242a46c7-f237-40e3-a37e-40529a39bf85
     tls_pkcs12: aos-user-sp.p12
     version: "1.0.0"
 
@@ -336,9 +336,9 @@ configuration:
   },
 
   evRangeExtender: {
-    name: 'EV Range Extender',
+    name: 'EV Range Extender - HPC Domain',
     appName: 'ev-range-extender',
-    description: 'Reads SoC, switches to POWER_SAVE below 20%, actuates lights/seat/HVAC, computes range',
+    description: 'Battery management, range computation, power-saving mode control for HPC node',
     cpp: `#include <iostream>
 #include <string>
 #include <thread>
@@ -514,7 +514,7 @@ build:
 
 publish:
     url: aoscloud.io
-    service_uid: b1a2c3d4-e5f6-7890-abcd-ef1234567890
+    service_uid: bb539aaa-682c-4a35-b492-19abed3118ff
     tls_pkcs12: aos-user-sp.p12
     version: "1.0.0"
 
@@ -541,9 +541,9 @@ configuration:
   },
 
   signalReporter: {
-    name: 'Signal Reporter',
+    name: 'Signal Reporter - Dashboard Relay',
     appName: 'signal-reporter',
-    description: 'Subscribes to all signals on KUKSA and pushes updates to the dashboard via HTTP relay',
+    description: 'Subscribes to all 9 vehicle signals and relays to dashboard via HTTP on HPC node',
     cpp: `#include <iostream>
 #include <string>
 #include <thread>
@@ -762,7 +762,7 @@ build:
 
 publish:
     url: aoscloud.io
-    service_uid: a9b8c7d6-e5f4-3210-fedc-ba0987654321
+    service_uid: 242dd4d4-7236-432d-88b9-ba9bbb3288f8
     tls_pkcs12: aos-user-sp.p12
     version: "1.0.0"
 

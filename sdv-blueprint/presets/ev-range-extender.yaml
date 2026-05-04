@@ -10,9 +10,9 @@ build:
 
 publish:
     url: aoscloud.io
-    service_uid: b1a2c3d4-e5f6-7890-abcd-ef1234567890
+    service_uid: bb539aaa-682c-4a35-b492-19abed3118ff
     tls_pkcs12: aos-user-sp.p12
-    version: "1.0.0"
+    version: "1.0.1"
 
 configuration:
     cmd: /ev-range-extender
@@ -25,12 +25,12 @@ configuration:
         priority: 0
     isResourceLimits: true
     requestedResources:
-        cpu: 2000
-        ram: 50MB
-        storage: 25MB
+        cpu: 1000
+        ram: 10MB
+        storage: 5MB
         state: 512KB
     quotas:
-        cpu: 2000
-        mem: 50MB
+        cpu: 1000
+        mem: 10MB
         state: 512KB
-        storage: 25MB
+        storage: 5MB

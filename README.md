@@ -1,6 +1,52 @@
-# Introduction
+# EPAM Service Connector for AosCloud
 
-This guidance aim to setup a serivce on EPAM unit to receive python code from playground.digital.auto and execute code.
+This repository contains two main components:
+
+1. **Eclipse SDV Blueprint Demo** (`/sdv-blueprint`) - Full vehicle signal flow demo with EV Range Extender use case
+2. **EPAM Service Connector** (`/service`) - Connector service for executing Python code from playground.digital.auto on AOS units
+
+---
+
+## Quick Start
+
+### For Eclipse SDV Blueprint Deployment
+
+**Full guide:** [sdv-blueprint/README.md](sdv-blueprint/README.md)
+
+**Deployed Services (v1.0.1):**
+- Signal Writer → Zonal-Unit (writes Speed, SoC, Temperature)
+- EV Range Extender → HPC-Unit (battery management, power-saving mode)
+- Signal Reporter → HPC-Unit (relays signals to dashboard)
+
+**Documentation:**
+- [C++ Deployment Log](docs/CPP_DEPLOYMENT_LOG.md) - Complete build & deployment process
+- [Created Services](docs/CREATED_SERVICES.md) - Service UUIDs and IDs
+- [Bridge Status](docs/BRIDGE_STATUS.md) - KUKSA bridge connection details
+- [Deployment Guide](docs/SDV_BLUEPRINT_DEPLOYMENT_GUIDE.md) - VM setup and architecture
+- [**Troubleshooting Guide**](docs/TROUBLESHOOTING.md) - **Common errors and solutions**
+
+**Quick Deploy:**
+```bash
+# Option 1: Use enhanced builder image (recommended)
+cd aos-edge-toolchain
+docker build -f Dockerfile.builder -t aos-edge-toolchain:builder .
+docker run --rm -v $(pwd)/../sdv-blueprint:/workspace/sdv-blueprint \
+    aos-edge-toolchain:builder bash -c "cd /workspace/sdv-blueprint && make all"
+
+# Option 2: Install build tools in running container
+docker exec aos-broadcaster bash < aos-edge-toolchain/setup-build-env.sh
+docker exec aos-broadcaster bash -c "cd /workspace/sdv-blueprint && make all"
+
+# Deploy via aos-broadcaster container (see CPP_DEPLOYMENT_LOG.md)
+```
+
+**Note:** Base `aos-edge-toolchain` image does NOT include C++ build tools. Use builder image or run setup script.
+
+---
+
+## EPAM Service Connector
+
+This guidance aims to setup a service on EPAM unit to receive python code from playground.digital.auto and execute code.
 
 ## Folder struture
 ```bash
@@ -86,6 +132,83 @@ aos-signer upload
 ```
 
 Then wait for service deploy to unit. It take a few minutes.
+
+---
+
+## Common Errors and Solutions
+
+### Error: "can't run any instances of service: job finished with status=failed"
+
+**Symptom:** Service uploaded successfully to AosCloud but fails to run on the unit. Shows `status=failed` in unit logs.
+
+**Root Cause:** Service binary is dynamically linked and requires shared libraries (e.g., libgrpc++, libprotobuf) that are not available in the minimal AOS container environment.
+
+**Solution:**
+
+#### Option 1: Build Static Binaries (Recommended for C++ services)
+
+Edit the Makefile and add `-static` flag:
+
+```makefile
+CXXFLAGS := -std=c++17 -O2 -static
+```
+
+**Note:** Static linking with gRPC++ can be complex. You may need to install static library versions:
+```bash
+apt install -y libgrpc++-dev libprotobuf-dev:native
+```
+
+Then rebuild:
+```bash
+make clean && make all
+```
+
+Verify the binary is static:
+```bash
+ldd build/signal-writer
+# Should output: "not a dynamic executable"
+```
+
+#### Option 2: Use Python Services (Easier)
+
+Python services work out-of-the-box because the AOS Python layer includes all dependencies.
+
+For SDV Blueprint, Python versions are available in `/sdv-blueprint/`:
+- `signal-writer.py` (instead of C++ signal-writer)
+- `signal-reporter/reporter.py` (instead of C++ signal-reporter)
+
+**Deploy Python service:**
+```bash
+# Update config.yaml to use Python entry point
+configuration:
+    cmd: python3
+    args: ["/signal-writer.py"]
+```
+
+#### Option 3: Bundle Dependencies in Service Package
+
+Include required .so files in your service package and set LD_LIBRARY_PATH.
+
+**Not recommended** - increases package size significantly.
+
+---
+
+### Error: Architecture Mismatch
+
+**Symptom:** Binary runs on host but fails in VM
+
+**Solution:** Ensure service YAML matches VM architecture:
+```yaml
+build:
+    arch: x86_64  # or aarch64 for ARM
+```
+
+Check VM architecture:
+```bash
+ssh root@<vm-ip> "uname -m"
+```
+
+---
 
 # Step 5: Test with existing prototype
 Go to playground.digital.auto perform below action:
