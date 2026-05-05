@@ -43,7 +43,17 @@ const signalHistory = [];          // ring buffer, last 500 entries
 const SIGNAL_HISTORY_MAX = 500;
 
 const http = require('http');
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
 const signalServer = http.createServer((req, res) => {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, corsHeaders);
+    res.end();
+    return;
+  }
   if (req.method === 'POST' && req.url === '/signal') {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
@@ -59,23 +69,38 @@ const signalServer = http.createServer((req, res) => {
             ...signal
           });
         }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        if (relayIO) {
+          relayIO.emit('signal', signal);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
         res.end('{"ok":true}');
       } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.writeHead(400, { 'Content-Type': 'application/json', ...corsHeaders });
         res.end('{"ok":false,"error":"invalid json"}');
       }
     });
   } else if (req.method === 'GET' && req.url === '/signals') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
     res.end(JSON.stringify(signalHistory.slice(-100)));
   } else {
-    res.writeHead(404);
+    res.writeHead(404, corsHeaders);
     res.end();
   }
 });
+const { Server: SocketIOServer } = require('socket.io');
+const relayIO = new SocketIOServer(signalServer, {
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+});
+relayIO.on('connection', (client) => {
+  console.log('[SignalRelay] Dashboard connected:', client.id);
+  client.emit('history', signalHistory.slice(-100));
+  client.on('disconnect', () => {
+    console.log('[SignalRelay] Dashboard disconnected:', client.id);
+  });
+});
+
 signalServer.listen(signalRelayPort, '0.0.0.0', () => {
-  console.log('[SignalRelay] HTTP listener on port', signalRelayPort);
+  console.log('[SignalRelay] HTTP + Socket.IO listener on port', signalRelayPort);
 });
 
 async function initCertFromEnv() {

@@ -1,362 +1,222 @@
-# Troubleshooting Guide - AosCloud Service Deployment
+# Troubleshooting Guide
 
-## Error: "can't run any instances of service: job finished with status=failed"
+Common issues and solutions for the Eclipse SDV Blueprint deployment.
 
-**Location:** AosCloud OEM Portal → Units → Unit Details → Service Status
+---
 
-**Full Error Message:**
+## VM Issues
+
+### SELinux Blocking Services
+
+**Symptom:** `crun` can't start containers, services show `Operation not permitted`
+
+**Fix:** Run after every VM reboot:
+```bash
+sshpass -p 'Password1' ssh -p <SSH_PORT> root@localhost "setenforce 0"
 ```
-can't run any instances of service: job finished with status=failed (systemdconn.cpp:336)
-[github.com/aosedge/aos_communicationmanager/unitstatushandler.(*softwareManager).checkNewServices:942]
+
+### VM Clock Drift
+
+**Symptom:** TLS errors, certificate validation failures after reboot
+
+**Fix:**
+```bash
+sshpass -p 'Password1' ssh -p <SSH_PORT> root@localhost "date -s '$(date -u)'"
+```
+
+### DNS Resolution Failed
+
+**Symptom:** Can't reach `aoscloud.io`, `nslookup` fails
+
+**Fix:**
+```bash
+sshpass -p 'Password1' ssh -p <SSH_PORT> root@localhost "
+  mount -o remount,rw /
+  mkdir -p /etc/systemd/resolved.conf.d
+  printf '[Resolve]\nDNS=8.8.8.8 1.1.1.1\n' > /etc/systemd/resolved.conf.d/public-dns.conf
+  systemctl restart systemd-resolved"
+```
+
+### Provision State Not Set
+
+**Symptom:** IAM fails with `can't initialize node info provider: not found`
+
+**Cause:** `/var/aos/.provisionstate` is empty (VM was powered off during provisioning)
+
+**Fix:**
+```bash
+sshpass -p 'Password1' ssh -p <SSH_PORT> root@localhost "
+  echo 'provisioned' > /var/aos/.provisionstate
+  systemctl restart aos.target"
+```
+
+### Read-Only Filesystem
+
+**Symptom:** `Read-only file system` when trying to modify config
+
+**Fix:**
+```bash
+sshpass -p 'Password1' ssh -p <SSH_PORT> root@localhost "mount -o remount,rw /"
 ```
 
 ---
 
-### Root Cause
+## Network Issues
 
-The C++ service binary is **dynamically linked** and requires shared libraries that are not available in the minimal AOS container runtime environment.
+### VirtualBox NAT Port Forwarding Doesn't Work for gRPC
 
-**Verification:**
+**Symptom:** TCP connects but gRPC calls time out with `DEADLINE_EXCEEDED`
+
+**Cause:** VirtualBox NAT network port forwarding doesn't reliably handle HTTP/2 (gRPC) traffic.
+
+**Fix:** Use SSH tunnels instead:
 ```bash
-# Check if binary is dynamic
-ldd build/signal-writer
+sshpass -p 'Password1' ssh -o StrictHostKeyChecking=no -f -N \
+  -L 55555:localhost:55555 -p <HPC_SSH_PORT> root@localhost
+sshpass -p 'Password1' ssh -o StrictHostKeyChecking=no -f -N \
+  -L 55556:localhost:55556 -p <ZONAL_SSH_PORT> root@localhost
+```
 
-# Dynamic binary shows output like:
-linux-vdso.so.1 => (0x00007ffc95fdc000)
-libgrpc++.so.1.51 => /lib/x86_64-linux-gnu/libgrpc++.so.1.51
-libprotobuf.so.32 => /lib/x86_64-linux-gnu/libprotobuf.so.32
-...
+### Corporate Proxy Interference
 
-# Static binary shows:
-not a dynamic executable
+**Symptom:** gRPC, pip, apt, or AosCloud connections fail or hang
+
+**Cause:** Proxy env vars (`http_proxy`, `HTTP_PROXY`) point to a non-running proxy.
+
+**Fix:** Unset proxy before every command:
+```bash
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY FTP_PROXY ftp_proxy
+```
+
+For Python gRPC scripts, use `env -i` for a completely clean environment:
+```bash
+env -i PATH="$PATH" HOME="$HOME" python3 my_script.py
+```
+
+For Docker containers:
+```bash
+docker exec container env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  HOME=/root bash -c "your_command"
 ```
 
 ---
 
-### Solutions
+## KUKSA Issues
 
-## Solution 1: Use Python Services (RECOMMENDED - Easiest)
+### KUKSA Connection Refused
 
-Python services work out-of-the-box because the `aos-pylibs-layer` includes all required dependencies.
+**Symptom:** Services can't connect to KUKSA Databroker
 
-### For SDV Blueprint
-
-Replace C++ services with Python equivalents:
-
-**Signal Writer:**
-- File: `/sdv-blueprint/signal-writer.py`
-- Update `/sdv-blueprint/presets/signal-writer.yaml`:
-
-```yaml
-configuration:
-    cmd: python3
-    args: ["/signal-writer.py"]
-    env:
-        KUKSA_DATABROKER_ADDR: "10.0.0.100:55556"
-```
-
-**Signal Reporter:**
-- File: `/sdv-blueprint/signal-reporter/reporter.py`
-- Update `/sdv-blueprint/presets/signal-reporter.yaml`:
-
-```yaml
-configuration:
-    cmd: python3
-    args: ["/reporter.py"]
-    env:
-        KUKSA_DATABROKER_ADDR: "10.0.0.100:55555"
-        RELAY_URL: "http://10.0.0.1:9100"
-```
-
-**Deploy Python Service:**
+**Check:**
 ```bash
-# In broadcaster container
-cd /workspace
-rm -rf src meta service.tar.gz
-mkdir -p src meta
+sshpass -p 'Password1' ssh -p <SSH_PORT> root@localhost \
+  "systemctl status kuksa-databroker --no-pager | head -8"
+```
 
-# Copy Python script instead of binary
-cp /workspace/sdv-blueprint/signal-writer.py src/signal-writer.py
+**Common causes:**
+1. Wrong binary path in service file → create override with correct path `/usr/bin/databroker`
+2. TLS mode mismatch → ensure KUKSA runs with `--insecure`
+3. Port not configured → ensure `--port 55555` (HPC) or `--port 55556` (Zonal)
 
-# Copy updated config
-cp /workspace/sdv-blueprint/presets/signal-writer.yaml meta/config.yaml
+### Custom VSS Paths Not Found
 
-# Create empty state file
-touch meta/default_state.dat
+**Symptom:** `Subscribe` returns `NOT_FOUND` for signals like `Vehicle.Cabin.Seat.VentilationLevel`
 
-# Sign and upload
-/usr/local/bin/aos-toolkit.sh sign
-/usr/local/bin/aos-toolkit.sh upload
+**Cause:** Stock KUKSA VSS 5.1 doesn't include blueprint-specific signal paths.
+
+**Fix:** Copy the merged VSS file to both VMs:
+```bash
+sshpass -p 'Password1' ssh -p <SSH_PORT> root@localhost "mount -o remount,rw /"
+sshpass -p 'Password1' scp -P <SSH_PORT> sdv-blueprint/vss-merged.json \
+  root@localhost:/usr/share/vss/vss.json
+sshpass -p 'Password1' ssh -p <SSH_PORT> root@localhost \
+  "systemctl restart kuksa-databroker"
 ```
 
 ---
 
-## Solution 2: Build Static C++ Binaries (COMPLEX)
+## Service Deployment Issues
 
-Static linking with gRPC++ is complex and requires static library versions.
+### C++ Services Must Use Insecure gRPC
 
-### Install Static Libraries
+**Symptom:** Service exits immediately with `Cannot read CA certificate`
 
-```bash
-# Inside aos-broadcaster container
-apt install -y \
-    libc-ares-dev:native \
-    libssl-dev:native \
-    zlib1g-dev:native \
-    libre2-dev:native
-```
+**Cause:** AOS crun containers don't have access to `/etc/kuksa-val/CA.pem`. TLS credentials fail.
 
-### Update Makefile
+**Fix:** All C++ services must use `grpc::InsecureChannelCredentials()`. KUKSA must run with `--insecure`.
 
+### Dynamic Binaries Fail in AOS Containers
+
+**Symptom:** `can't run any instances of service: job finished with status=failed`
+
+**Cause:** Dynamically linked C++ binaries require shared libraries not available in AOS containers.
+
+**Fix:** Build with static linking:
 ```makefile
 CXXFLAGS := -std=c++17 -O2 -static -static-libgcc -static-libstdc++
-LDFLAGS  := -static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
 ```
 
-### Build
+Binary size increases from ~700KB to ~19MB. Verify: `ldd build/signal-writer` → "not a dynamic executable"
 
-```bash
-cd /workspace/sdv-blueprint
-make clean
-make all
-```
+### Version Already Exists
 
-### Verify Static Binary
+**Symptom:** `ERROR: version: Value is already presented for the service`
 
-```bash
-ldd build/signal-writer
-# Should output: "not a dynamic executable"
-
-file build/signal-writer
-# Should show: "statically linked"
-```
-
-**Known Issues:**
-- `cannot find -lcares` - Install `libc-ares-dev` static version
-- Linker errors - gRPC++ static linking is notoriously difficult
-- Large binary size - static binaries are 5-10x larger
-
----
-
-## Solution 3: Create Service Layer with Dependencies
-
-Package required .so files with your service.
-
-**Not recommended** - increases complexity and package size significantly.
-
----
-
-## Verification After Fix
-
-### 1. Check Service Logs on VM
-
-```bash
-# SSH to unit
-ssh -p 8139 root@localhost
-
-# Check service manager logs
-journalctl -u aos-servicemanager --no-pager -n 100 | grep -i signal-writer
-
-# Check if service is running
-ps | grep signal-writer
-```
-
-### 2. Check in AosCloud OEM Portal
-
-Navigate to: **Units** → **Your Unit** → **Services** tab
-
-**Expected Status:**
-- Service: Signal Writer v1.0.1
-- Status: **Running** ✅ (not "failed")
-- Instances: 1/1
-
-### 3. Test Service Functionality
-
-```bash
-# For Signal Writer - verify it's writing to KUKSA
-ssh -p 8139 root@localhost "
-    echo 'Checking KUKSA signals...'
-    # Monitor KUKSA for new values (if kuksa-client available)
-"
-```
-
----
-
-## Additional Common Errors
-
-### Error: "Quota storage_disk_limit exceeds service quota"
-
-**Solution:** Reduce resource quotas in YAML to match AosCloud service limits
-
-```yaml
-requestedResources:
-    storage: 5MB      # Match AosCloud service quota
-quotas:
-    storage: 5MB      # Must match
-```
-
-### Error: "version already presented"
-
-**Solution:** Bump version number
-
+**Fix:** Bump the version in the service YAML before re-uploading:
 ```yaml
 publish:
-    version: "1.0.2"  # Increment from 1.0.1
+    version: "1.0.16"  # increment this
 ```
 
-### Error: Architecture mismatch
+---
 
-**Symptom:** Binary works on host but not in VM
+## Dashboard Issues
 
-**Solution:** Verify YAML architecture matches VM:
+### Dashboard Shows "--" for All Values
+
+**Symptom:** Page loads but no signal data after clicking Connect
+
+**Check:**
+1. Is the broadcaster running? `docker logs aos-broadcaster 2>&1 | grep SignalRelay`
+2. Is the relay receiving signals? `curl -s http://localhost:9100/signals | python3 -m json.tool | tail -5`
+3. Are the SSH tunnels alive? `ss -tlnp | grep -E '55555|55556'`
+4. Is the KUKSA bridge running? `ps aux | grep kuksa-bridge`
+
+### CORS Errors in Browser Console
+
+**Symptom:** `Access-Control-Allow-Origin` errors when fetching from `:9100`
+
+**Fix:** The broadcaster's signal relay must include CORS headers. This is handled in `aos-broadcaster.js`. If you see this error, restart the broadcaster with the latest script.
+
+---
+
+## Quick Diagnostic Commands
 
 ```bash
-# Check VM architecture
-ssh root@<vm-ip> "uname -m"
+# Check all VMs
+VBoxManage list runningvms
 
-# Update YAML to match
-build:
-    arch: x86_64    # or aarch64
+# Check all ports
+ss -tlnp | grep -E '(55555|55556|9100|3012)'
+
+# Check all processes
+ps aux | grep -E "(kuksa-bridge|simulator|esbuild|ssh.*-L)" | grep -v grep
+
+# Check signal flow
+env -i PATH="$PATH" HOME="$HOME" python3 -c "
+import grpc
+from kuksa.val.v1 import val_pb2, val_pb2_grpc, types_pb2
+for port, name in [(55555, 'HPC'), (55556, 'Zonal')]:
+    stub = val_pb2_grpc.VALStub(grpc.insecure_channel(f'localhost:{port}'))
+    resp = stub.GetServerInfo(val_pb2.GetServerInfoRequest(), timeout=5)
+    print(f'{name}: {resp.name} {resp.version}')
+"
+
+# Check relay
+curl -s http://localhost:9100/signals | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print(f'{len(d)} signals')
+for s in d[-3:]: print(f'  {s[\"signal\"]}: {s[\"value\"]}')
+"
 ```
-
----
-
-## Prevention
-
-### For New C++ Services
-
-**Option A: Start with Python**
-- Faster development
-- No compilation issues
-- Built-in dependency management
-
-**Option B: Use Static Build from Start**
-- Set up proper static build environment
-- Test binary with `ldd` before deployment
-- Keep binaries small (<5MB if possible)
-
-### Test Locally First
-
-```bash
-# Test binary can execute in minimal environment
-docker run --rm -v $(pwd)/build:/app alpine:latest /app/signal-writer --help
-
-# Should fail with "not found" errors if dynamically linked
-```
-
----
-
-## Quick Reference
-
-| Issue | Root Cause | Fix |
-|-------|------------|-----|
-| `job finished with status=failed` | Dynamic binary, missing .so files | Use Python or rebuild static |
-| Binary not found | Wrong path in config.yaml | Check `cmd:` matches binary name |
-| Permission denied | Binary not executable | `chmod +x` before packaging |
-| Quota exceeded | YAML requests > AosCloud limits | Reduce quotas in YAML |
-| Version exists | Uploading same version twice | Increment version number |
-
----
-
-## Error: "No auth token provided"
-
-**Symptom:** Service connects to KUKSA but fails with gRPC error code 16
-
-**Error Message:**
-```
-[Writer] Retry 1/15 failed: 16 - No auth token provided
-```
-
-**Root Cause:** KUKSA Databroker is configured with JWT authentication, but the service is connecting without providing an auth token.
-
-**Solution:** Configure KUKSA Databroker to run in insecure mode (no authentication):
-
-```bash
-# Edit KUKSA systemd override
-cat > /etc/systemd/system/kuksa-databroker.service.d/override.conf << 'EOF'
-[Service]
-ExecStart=
-ExecStart=/usr/bin/databroker --vss /usr/share/vss/vss.json --address=0.0.0.0 --port 55556 --insecure
-EOF
-
-# Reload and restart
-systemctl daemon-reload
-systemctl restart kuksa-databroker
-```
-
-**Verify:**
-```bash
-systemctl status kuksa-databroker
-# Should show: "Authorization is not enabled."
-```
-
----
-
-**Last Updated:** May 4, 2026  
-**Tested With:** AosCloud v10 API, aos-servicemanager, VirtualBox 7.1.6, KUKSA Databroker 0.5.0
-
----
-
-## Error: "failed to start unit [Operation not permitted]" - Network Configuration Issue
-
-**Symptom:** Service uploaded successfully but fails to start with:
-```
-can't run any instances of service: failed to start unit [Operation not permitted]
-```
-
-**Root Cause:** Service is configured with wrong KUKSA Databroker address. AOS containers cannot reach VM network addresses (e.g., `10.0.0.100`) directly. They must use the Docker bridge gateway IP `172.17.0.1` to access host services.
-
-**Verification:**
-Check service logs for connection errors:
-```bash
-# In AosCloud OEM Portal, check service logs
-# Or SSH to unit:
-ssh root@<vm-ip>
-journalctl -u aos-servicemanager | grep -E "signal-writer|ev-range|signal-reporter"
-```
-
-**Solution:**
-
-Add environment variable to service YAML configuration:
-
-```yaml
-configuration:
-    cmd: /your-service-binary
-    workingDir: '/'
-    env:
-        - "KUKSA_DATABROKER_ADDR=172.17.0.1:<port>"
-    # ... rest of config
-```
-
-**Port mapping:**
-- Zonal KUKSA: `172.17.0.1:55556`
-- HPC KUKSA: `172.17.0.1:55555`
-
-**Example - Signal Writer (Zonal):**
-```yaml
-env:
-    - "KUKSA_DATABROKER_ADDR=172.17.0.1:55556"
-```
-
-**Example - EV Range Extender (HPC):**
-```yaml
-env:
-    - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
-```
-
-**Example - Signal Reporter (HPC + Relay):**
-```yaml
-env:
-    - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
-    - "SIGNAL_RELAY_URL=10.0.0.1:9100"
-```
-
-After updating YAML:
-1. Increment version number in `publish:` section
-2. Rebuild and redeploy service to AosCloud
-3. Verify service starts successfully
-
----
-
-**Last Updated:** May 5, 2026  
-**Tested With:** AosCloud v10 API, aos-servicemanager, KUKSA Databroker 0.5.0

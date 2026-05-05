@@ -27,7 +27,7 @@
 #include "kuksa/val/v1/val.grpc.pb.h"
 #include "kuksa/val/v1/types.pb.h"
 
-#define VERSION "1.0.4"
+#define VERSION "1.0.14"
 
 static std::string read_file(const std::string& path) {
     std::ifstream f(path);
@@ -113,7 +113,7 @@ static void parse_host_port(const std::string& url,
 }
 
 int main(int argc, char* argv[]) {
-    std::string kuksa_target = "10.0.0.100:55555";
+    std::string kuksa_target = "172.17.0.1:55555";
     std::string relay_url    = "10.0.0.1:9100";
     std::string ca_path      = "/etc/kuksa-val/CA.pem";
 
@@ -132,25 +132,12 @@ int main(int argc, char* argv[]) {
     std::cout << "  Version:    " << VERSION << std::endl;
     std::cout << "  Databroker: " << kuksa_target << std::endl;
     std::cout << "  Relay:      " << relay_host << ":" << relay_port << std::endl;
-    std::cout << "  TLS:        Enabled" << std::endl;
-    std::cout << "  CA Cert:    " << ca_path << std::endl;
+    std::cout << "  TLS:        Disabled (insecure)" << std::endl;
     std::cout << "========================================" << std::endl;
     std::cout.flush();
 
-    // Load TLS certificate
-    std::string ca_cert = read_file(ca_path);
-    if (ca_cert.empty()) {
-        std::cerr << "[Reporter] ERROR: Cannot read CA certificate" << std::endl;
-        return 1;
-    }
-
-    // Create TLS credentials
-    grpc::SslCredentialsOptions ssl_opts;
-    ssl_opts.pem_root_certs = ca_cert;
-    auto creds = grpc::SslCredentials(ssl_opts);
-
-    // Create secure channel
-    auto channel = grpc::CreateChannel(kuksa_target, creds);
+    // Create insecure channel
+    auto channel = grpc::CreateChannel(kuksa_target, grpc::InsecureChannelCredentials());
     auto stub = kuksa::val::v1::VAL::NewStub(channel);
 
     // Wait for databroker
@@ -161,7 +148,7 @@ int main(int argc, char* argv[]) {
         ctx.set_deadline(std::chrono::system_clock::now() +
                          std::chrono::seconds(3));
         if (stub->GetServerInfo(&ctx, req, &resp).ok()) {
-            std::cout << "[Reporter] Connected (TLS): " << resp.name()
+            std::cout << "[Reporter] Connected: " << resp.name()
                       << " " << resp.version() << std::endl;
             break;
         }

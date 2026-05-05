@@ -9,7 +9,8 @@ type StatusCallback = (connected: boolean) => void
 type LogCallback = (msg: string) => void
 
 export class SignalService {
-  private socket: any = null
+  private kitSocket: any = null
+  private relaySocket: any = null
   private isConnected = false
   private onSignal: SignalCallback | null = null
   private onStatus: StatusCallback | null = null
@@ -34,26 +35,56 @@ export class SignalService {
   }
 
   connect(instanceId: string): void {
-    if (this.socket) { this.socket.disconnect(); this.socket = null }
+    this.disconnect()
 
-    this.log('Connecting to ' + this.kitManagerUrl + '...')
-    this.onStatus?.(false)
+    const relayHost = window.location.hostname || 'localhost'
+    const relayUrl = `http://${relayHost}:9100`
 
-    this.socket = ioClient(this.kitManagerUrl, {
+    this.log('Connecting to relay at ' + relayUrl)
+    this.relaySocket = ioClient(relayUrl, {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: Infinity,
+      reconnectionDelay: 2000,
+    })
+
+    this.relaySocket.on('connect', () => {
+      this.isConnected = true
+      this.onStatus?.(true)
+      this.log('Connected to signal relay (real-time)')
+    })
+
+    this.relaySocket.on('history', (signals: any[]) => {
+      signals.forEach((s: any) => this.handleSignal(s.signal, s.value, s.ts))
+      this.log('Loaded ' + signals.length + ' historical signals')
+    })
+
+    this.relaySocket.on('signal', (s: any) => {
+      this.handleSignal(s.signal, s.value, s.ts)
+    })
+
+    this.relaySocket.on('disconnect', () => {
+      this.isConnected = false
+      this.onStatus?.(false)
+      this.log('Relay disconnected, reconnecting...')
+    })
+
+    this.relaySocket.on('connect_error', (err: any) => {
+      this.log('Relay error: ' + err.message)
+    })
+
+    this.log('Connecting to Kit Manager...')
+    this.kitSocket = ioClient(this.kitManagerUrl, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 5,
       reconnectionDelay: 3000,
     })
 
-    this.socket.on('connect', () => {
-      this.isConnected = true
-      this.onStatus?.(true)
+    this.kitSocket.on('connect', () => {
       this.log('Connected to Kit Manager')
-
-      const reqId = 'dash-' + Date.now()
-      this.socket.emit('messageToKit', {
-        id: reqId,
+      this.kitSocket.emit('messageToKit', {
+        id: 'dash-' + Date.now(),
         cmd: 'aos_signal_stream',
         to_kit_id: instanceId,
         type: 'aos_signal_stream',
@@ -61,28 +92,16 @@ export class SignalService {
       })
     })
 
-    this.socket.on('disconnect', () => {
-      this.isConnected = false
-      this.onStatus?.(false)
-      this.log('Disconnected')
-    })
-
-    this.socket.on('connect_error', (err: any) => {
-      this.log('Connection error: ' + err.message)
-    })
-
-    this.socket.on('broadcastToClient', (msg: any) => {
-      if (msg.type === 'signal-update' && msg.signal) {
-        this.handleSignal(msg.signal, msg.value, msg.ts)
+    this.kitSocket.on('messageToKit-kitReply', (msg: any) => {
+      if (msg.type === 'aos_signal_stream' && msg.signals) {
+        msg.signals.forEach((s: any) => this.handleSignal(s.signal, s.value, s.ts))
+        this.log('Kit Manager: ' + msg.signals.length + ' signals')
       }
     })
 
-    this.socket.on('messageToKit-kitReply', (msg: any) => {
-      if (msg.type === 'aos_signal_stream' && msg.signals) {
-        msg.signals.forEach((s: any) => {
-          this.handleSignal(s.signal, s.value, s.ts)
-        })
-        this.log('Loaded ' + msg.signals.length + ' historical signals')
+    this.kitSocket.on('broadcastToClient', (msg: any) => {
+      if (msg.type === 'signal-update' && msg.signal) {
+        this.handleSignal(msg.signal, msg.value, msg.ts)
       }
     })
   }
@@ -94,10 +113,8 @@ export class SignalService {
   }
 
   disconnect(): void {
-    if (this.socket) {
-      this.socket.disconnect()
-      this.socket = null
-    }
+    if (this.relaySocket) { this.relaySocket.disconnect(); this.relaySocket = null }
+    if (this.kitSocket) { this.kitSocket.disconnect(); this.kitSocket = null }
     this.isConnected = false
     this.onStatus?.(false)
   }

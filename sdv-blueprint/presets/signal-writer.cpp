@@ -107,7 +107,7 @@ int main(int argc, char* argv[]) {
     int t = 0;
     while (true) {
         float speed = 40.0f + 30.0f * std::sin(t * 0.1f);
-        float soc   = std::max(0.0f, 80.0f - std::fmod(t * 0.1f, 80.0f));
+        float soc   = std::max(0.0f, 80.0f - std::fmod(t * 1.5f, 80.0f));
         float temp  = 22.0f + 5.0f * std::sin(t * 0.05f);
 
         set_signal(stub.get(), "Vehicle.Speed", speed);

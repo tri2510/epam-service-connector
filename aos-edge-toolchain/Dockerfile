@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install socket.io-client + proxy agent for Socket.IO through corporate proxy
-RUN npm install --global --prefix=/usr/local socket.io-client https-proxy-agent
+RUN npm install --global --prefix=/usr/local socket.io-client socket.io https-proxy-agent
 
 # Create symlinks for easier access
 RUN ln -sf /usr/bin/aarch64-linux-gnu-g++ /usr/local/bin/aarch64-linux-gnu-g++ && \

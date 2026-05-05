@@ -12,7 +12,7 @@ publish:
     url: aoscloud.io
     service_uid: 242a46c7-f237-40e3-a37e-40529a39bf85
     tls_pkcs12: aos-user-sp.p12
-    version: "1.0.9"
+    version: "1.0.10"
 
 configuration:
     cmd: /signal-writer

@@ -26,7 +26,7 @@
 #include "kuksa/val/v1/val.grpc.pb.h"
 #include "kuksa/val/v1/types.pb.h"
 
-#define VERSION "1.0.4"
+#define VERSION "1.0.14"
 #define SOC_THRESHOLD 20.0f
 #define NORMAL_EFFICIENCY 5.5f
 #define DEGRADED_EFFICIENCY 4.0f
@@ -85,7 +85,7 @@ static bool set_signal(kuksa::val::v1::VAL::Stub* stub,
 }
 
 int main(int argc, char* argv[]) {
-    std::string target = "10.0.0.100:55555";
+    std::string target = "172.17.0.1:55555";
     int interval = 2;
     std::string ca_path = "/etc/kuksa-val/CA.pem";
 
@@ -105,25 +105,12 @@ int main(int argc, char* argv[]) {
     std::cout << "  Databroker:    " << target << std::endl;
     std::cout << "  Interval:      " << interval << "s" << std::endl;
     std::cout << "  SoC threshold: " << soc_threshold << "%" << std::endl;
-    std::cout << "  TLS:           Enabled" << std::endl;
-    std::cout << "  CA Cert:       " << ca_path << std::endl;
+    std::cout << "  TLS:           Disabled (insecure)" << std::endl;
     std::cout << "========================================" << std::endl;
     std::cout.flush();
 
-    // Load TLS certificate
-    std::string ca_cert = read_file(ca_path);
-    if (ca_cert.empty()) {
-        std::cerr << "[RangeExt] ERROR: Cannot read CA certificate" << std::endl;
-        return 1;
-    }
-
-    // Create TLS credentials
-    grpc::SslCredentialsOptions ssl_opts;
-    ssl_opts.pem_root_certs = ca_cert;
-    auto creds = grpc::SslCredentials(ssl_opts);
-
-    // Create secure channel
-    auto channel = grpc::CreateChannel(target, creds);
+    // Create insecure channel
+    auto channel = grpc::CreateChannel(target, grpc::InsecureChannelCredentials());
     auto stub = kuksa::val::v1::VAL::NewStub(channel);
 
     // Wait for databroker
@@ -135,7 +122,7 @@ int main(int argc, char* argv[]) {
                          std::chrono::seconds(3));
         auto st = stub->GetServerInfo(&ctx, req, &resp);
         if (st.ok()) {
-            std::cout << "[RangeExt] Connected (TLS): " << resp.name()
+            std::cout << "[RangeExt] Connected: " << resp.name()
                       << " " << resp.version() << std::endl;
             break;
         }
