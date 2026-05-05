@@ -34,6 +34,11 @@ export default function Page({ data, config }: PluginProps) {
   const [deployedApps, setDeployedApps] = React.useState<AosApp[]>([])
   const [connectionStatus, setConnectionStatus] = React.useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
   const [selectedPreset, setSelectedPreset] = React.useState('custom')
+  const [autoIncVersion, setAutoIncVersion] = React.useState(true)
+  const cppCodeRef = React.useRef(cppCode)
+  const yamlConfigRef = React.useRef(yamlConfig)
+  cppCodeRef.current = cppCode
+  yamlConfigRef.current = yamlConfig
 
   // Docker instances state
   const [dockerInstances, setDockerInstances] = React.useState<DockerInstance[]>([])
@@ -513,10 +518,16 @@ export default function Page({ data, config }: PluginProps) {
     const service = new AosService(serviceUrl, selectedInstance || 'default-aos-target')
     aosServiceRef.current = service
 
+    const stageLabels: Record<string, string> = {
+      init: 'Init', config: 'Config', proto: 'Proto',
+      compile: 'Compile', bundle: 'Bundle',
+      sign: 'Sign', upload: 'Publish', error: 'Error'
+    }
     service.onBuildProgress((message: any) => {
-      addLog(`[Build] ${message.message || JSON.stringify(message)}`)
-      if (message.progress !== undefined) {
-        setBuildStatus(`Building... ${message.progress}%`)
+      const label = stageLabels[message.stage] || message.stage || 'Build'
+      addLog(`[${label}] ${message.message || JSON.stringify(message)}`)
+      if (message.progress !== undefined && message.progress >= 0) {
+        setBuildStatus(`${label}... ${message.progress}%`)
       }
     })
 
@@ -766,8 +777,27 @@ export default function Page({ data, config }: PluginProps) {
         aosServiceRef.current.getServiceUnits(uuid).catch(() => ({ status: 'error', units: [] })),
       ])
       if (versRes.status === 'success') {
-        setServiceVersions(versRes.versions || [])
+        const sorted = (versRes.versions || []).sort((a: any, b: any) => {
+          const pa = (a.version || '').split('.').map(Number)
+          const pb = (b.version || '').split('.').map(Number)
+          for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+            const diff = (pb[i] || 0) - (pa[i] || 0)
+            if (diff !== 0) return diff
+          }
+          return 0
+        })
+        setServiceVersions(sorted)
         setServiceName(versRes.serviceName || '')
+
+        if (autoIncVersion && sorted.length > 0) {
+          const latest = sorted[0].version
+          const parts = latest.split('.')
+          parts[parts.length - 1] = String(Number(parts[parts.length - 1]) + 1)
+          const next = parts.join('.')
+          setCppCode(prev => prev.replace(/#define\s+VERSION\s+"[^"]+"/, `#define VERSION "${next}"`))
+          setYamlConfig(prev => prev.replace(/version:\s*"[^"]+"/, `version: "${next}"`))
+          addLog(`[Version] Next: ${latest} → ${next}`)
+        }
       }
       if (unitsRes.status === 'success') {
         setServiceUnits(unitsRes.units || [])
@@ -877,22 +907,33 @@ export default function Page({ data, config }: PluginProps) {
       return
     }
 
+    setBuildLogs([])
+
+    let finalCpp = cppCodeRef.current
+    let finalYaml = yamlConfigRef.current
+
+    
+
     setIsBuilding(true)
     setBuildStatus('Starting build...')
-    setBuildLogs([])
     addLog('[Build] Starting AOS application build...')
 
     try {
       const response = await aosServiceRef.current.buildAndDeploy({
         name: appName,
         displayName: appName,
-        cppCode,
-        yamlConfig
+        cppCode: finalCpp,
+        yamlConfig: finalYaml
       })
 
-      addLog(`[Build] Build started: ${response.appId}`)
+      if (response.message && response.message.includes('\n')) {
+        response.message.split('\n').filter((l: string) => l.trim()).forEach((line: string) => {
+          addLog(line)
+        })
+      } else {
+        addLog(`[Build] ${response.message || 'Build started: ' + response.appId}`)
+      }
 
-      // Check if build completed immediately (broadcaster returns sync response)
       if (response.status === 'success') {
         setBuildStatus('Build completed successfully!')
         setIsBuilding(false)
@@ -939,10 +980,24 @@ export default function Page({ data, config }: PluginProps) {
     setSelectedPreset(presetName)
     const preset = (PRESETS as any)[presetName]
     if (preset) {
-      setCppCode(preset.cpp)
-      setYamlConfig(preset.yaml)
+      let cpp = preset.cpp
+      let yaml = preset.yaml
+
+      if (autoIncVersion && serviceVersions.length > 0) {
+        const latest = serviceVersions[0].version
+        const parts = latest.split('.')
+        parts[parts.length - 1] = String(Number(parts[parts.length - 1]) + 1)
+        const next = parts.join('.')
+        cpp = cpp.replace(/#define\s+VERSION\s+"[^"]+"/, `#define VERSION "${next}"`)
+        yaml = yaml.replace(/version:\s*"[^"]+"/, `version: "${next}"`)
+        addLog(`[Preset] Loaded: ${preset.name || presetName} (version: ${next})`)
+      } else {
+        addLog(`[Preset] Loaded: ${preset.name || presetName}`)
+      }
+
+      setCppCode(cpp)
+      setYamlConfig(yaml)
       setAppName(preset.appName || presetName)
-      addLog(`[Preset] Loaded: ${preset.name || presetName}`)
     }
   }
 
@@ -1493,6 +1548,21 @@ export default function Page({ data, config }: PluginProps) {
                   React.createElement('span', null, '⚡'),
                   ' Build & Deploy'
                 )
+          ),
+          // Auto-increment version toggle
+          React.createElement('label', {
+            style: {
+              display: 'flex', alignItems: 'center', gap: '6px',
+              fontSize: '12px', color: '#6b7280', cursor: 'pointer', userSelect: 'none'
+            }
+          },
+            React.createElement('input', {
+              type: 'checkbox',
+              checked: autoIncVersion,
+              onChange: (e: any) => setAutoIncVersion(e.target.checked),
+              style: { cursor: 'pointer' }
+            }),
+            'Auto-increment version'
           ),
           // Warning hint when no instance selected
           !selectedInstance && React.createElement('div', {

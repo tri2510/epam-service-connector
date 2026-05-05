@@ -288,14 +288,22 @@ async function main() {
   });
 }
 
+const SUPPORTED_ARCHS = {
+  'x86_64': 'x86_64', 'amd64': 'x86_64',
+  'aarch64': 'aarch64', 'arm64': 'aarch64',
+};
+
 function detectArch(yamlConfig) {
   const archMatch = yamlConfig.match(/arch:\s*(\S+)/);
-  const arch = archMatch ? archMatch[1] : '';
-  if (arch === 'aarch64' || arch === 'arm64') return 'aarch64';
-  if (arch === 'x86_64' || arch === 'amd64') return 'x86_64';
-  const { arch: hostArch } = require('os');
-  const ha = hostArch();
-  return (ha === 'x64' || ha === 'x86_64') ? 'x86_64' : 'aarch64';
+  if (!archMatch) {
+    throw new Error('Missing "arch:" field in config.yaml. Supported values: x86_64, aarch64');
+  }
+  const arch = archMatch[1];
+  const resolved = SUPPORTED_ARCHS[arch];
+  if (!resolved) {
+    throw new Error(`Unsupported architecture "${arch}" in config.yaml. Supported values: ${Object.keys(SUPPORTED_ARCHS).join(', ')}`);
+  }
+  return resolved;
 }
 
 function compilerForArch(arch) {
@@ -341,14 +349,27 @@ async function bundleDynamicLibs(binaryPath, srcDir) {
   }
 }
 
+const buildLog = [];
+function emitProgress(stage, message, progress) {
+  const entry = { stage, message, progress, ts: Date.now() };
+  buildLog.push(entry);
+  const payload = { kit_id: instanceId, type: 'aos-build-progress', ...entry };
+  console.log(`[Build] [${stage}] ${message}`);
+  if (socket && socket.connected) {
+    socket.emit('broadcastToClient', payload);
+  }
+  if (relayIO) {
+    relayIO.emit('build-progress', payload);
+  }
+}
+
 async function handleBuildDeploy(data) {
   const appName = data.name || 'hello-aos';
   const cppCode = data.cppCode || '';
   const yamlConfig = data.yamlConfig || '';
 
-  console.log('[Build] Starting build for:', appName);
-  console.log('[Build] C++ code length:', cppCode.length);
-  console.log('[Build] YAML config length:', yamlConfig.length);
+  buildLog.length = 0;
+  emitProgress('init', `Starting build for ${appName}`, 0);
 
   try {
     await execAsync('rm -rf /workspace/src /workspace/meta /workspace/project /workspace/generated', { cwd: workspaceDir });
@@ -364,13 +385,13 @@ async function handleBuildDeploy(data) {
 
     const targetArch = detectArch(yamlConfig);
     const cxx = compilerForArch(targetArch);
-    console.log('[Build] Target arch:', targetArch, '→ compiler:', cxx);
+    emitProgress('config', `Target: ${targetArch}, compiler: ${cxx}`, 10);
 
     const isGrpcProject = cppCode.includes('grpcpp') || cppCode.includes('grpc.pb.h');
     const builtBinary = path.join(workspaceDir, appName);
 
     if (isGrpcProject) {
-      console.log('[Build] Detected gRPC project');
+      emitProgress('proto', 'Generating gRPC proto stubs...', 15);
       const genDir = path.join(workspaceDir, 'generated');
       await fs.mkdir(path.join(genDir, 'kuksa/val/v1'), { recursive: true });
       const protoDir = '/usr/local/share/kuksa-proto';
@@ -379,7 +400,7 @@ async function handleBuildDeploy(data) {
       for (const proto of ['types', 'val']) {
         await execAsync(`protoc --proto_path=${protoDir} --cpp_out=${genDir} --grpc_out=${genDir} --plugin=protoc-gen-grpc=${grpcPlugin} ${protoDir}/kuksa/val/v1/${proto}.proto`);
       }
-      console.log('[Build] Proto stubs generated');
+      emitProgress('proto', 'Proto stubs generated', 20);
 
       const grpcFlags = targetArch === 'x86_64'
         ? '$(pkg-config --cflags --libs grpc++ protobuf) -lpthread'
@@ -390,60 +411,73 @@ async function handleBuildDeploy(data) {
         `${genDir}/kuksa/val/v1/types.pb.cc ${genDir}/kuksa/val/v1/types.grpc.pb.cc ` +
         `${genDir}/kuksa/val/v1/val.pb.cc ${genDir}/kuksa/val/v1/val.grpc.pb.cc ` +
         `${grpcFlags} -o ${builtBinary}`;
-      console.log('[Build] Compiling gRPC app...');
+      emitProgress('compile', 'Compiling gRPC application...', 25);
       await execAsync(compileCmd, { cwd: workspaceDir, env: { ...process.env }, timeout: 300000 });
     } else {
       const staticFlag = '-static';
       const compileCmd = `${cxx} ${staticFlag} -std=c++17 -O2 ${workspaceDir}/src/main.cpp -o ${builtBinary}`;
-      console.log('[Build] Compiling simple app...');
+      emitProgress('compile', 'Compiling application...', 25);
       await execAsync(compileCmd, { cwd: workspaceDir, timeout: 60000 });
     }
 
     const { stdout: fileOut } = await execAsync(`file ${builtBinary}`);
-    console.log('[Build]', fileOut.trim());
+    emitProgress('compile', `Binary: ${fileOut.trim().split(':').pop().trim().slice(0, 80)}`, 50);
 
     await fs.copyFile(builtBinary, path.join(workspaceDir, 'src', appName));
     try { await fs.unlink(path.join(workspaceDir, 'src/main.cpp')); } catch (e) { /* ok */ }
 
     if (isGrpcProject && targetArch === 'x86_64') {
+      emitProgress('bundle', 'Bundling dynamic libraries...', 55);
       await bundleDynamicLibs(path.join(workspaceDir, 'src', appName), path.join(workspaceDir, 'src'));
     }
 
-    console.log('[Build] Signing...');
+    emitProgress('sign', 'Signing service package...', 60);
     const { stdout: signOut, stderr: signErr } = await execAsync('aos-signer sign', { cwd: workspaceDir, env: { ...process.env } });
-    console.log('[Build] Sign:', signOut.slice(-200));
 
     const pkgStats = await fs.stat(path.join(workspaceDir, 'service.tar.gz')).catch(() => null);
     if (!pkgStats) throw new Error('Package not created after signing');
-    console.log('[Build] Package:', pkgStats.size, 'bytes');
+    const sizeMB = (pkgStats.size / (1024 * 1024)).toFixed(1);
+    emitProgress('sign', `Package signed: ${sizeMB} MB`, 75);
 
-    let uploadResult = null;
+    emitProgress('upload', 'Uploading to AosCloud...', 80);
     try {
-      const { stdout: uploadOut } = await execAsync('aos-signer upload', { cwd: workspaceDir, env: { ...process.env } });
-      uploadResult = uploadOut;
-      console.log('[Build] Upload:', uploadOut.slice(-200));
+      const { stdout: uploadOut, stderr: uploadStderr } = await execAsync('aos-signer upload', { cwd: workspaceDir, env: { ...process.env } });
+      const fullOutput = (uploadOut + ' ' + (uploadStderr || '')).trim();
+      if (fullOutput.toLowerCase().includes('error') || fullOutput.toLowerCase().includes('failed')) {
+        emitProgress('upload', `Upload rejected: ${fullOutput.slice(-200)}`, -1);
+        return {
+          kit_id: instanceId, type: 'aos_build_deploy', status: 'error',
+          appId: appName, message: `Upload rejected by AosCloud: ${fullOutput.slice(-200)}`
+        };
+      }
+      emitProgress('upload', 'Upload complete — service published to AosCloud', 100);
     } catch (uploadErr) {
-      console.log('[Build] Upload failed:', uploadErr.message.slice(-100));
+      const errMsg = uploadErr.stderr || uploadErr.stdout || uploadErr.message || 'Unknown upload error';
+      emitProgress('upload', `Upload failed: ${errMsg.slice(-200)}`, -1);
+      return {
+        kit_id: instanceId, type: 'aos_build_deploy', status: 'error',
+        appId: appName, message: `Upload failed: ${errMsg.slice(-200)}`
+      };
     }
 
+    const logSummary = buildLog.map(e => `[${e.stage}] ${e.message}`).join('\n');
     return {
       kit_id: instanceId,
       type: 'aos_build_deploy',
       status: 'success',
       appId: appName,
       executionId: appName,
-      message: 'Build completed successfully',
-      packageSize: pkgStats.size,
-      uploadResult: uploadResult ? 'uploaded' : 'not_uploaded'
+      message: logSummary
     };
 
   } catch (error) {
-    console.error('[Build] Error:', error.message);
+    emitProgress('error', error.message, -1);
+    const logSummary = buildLog.map(e => `[${e.stage}] ${e.message}`).join('\n');
     return {
       kit_id: instanceId,
       type: 'aos_build_deploy',
       status: 'error',
-      message: error.message,
+      message: logSummary + '\n[error] ' + error.message,
       appId: appName
     };
   }
@@ -741,7 +775,8 @@ async function handleGetServiceUnits(data) {
         }
         return {
           uid,
-          name: detail.model?.name || detail.name || uid.substring(0, 12),
+          name: (detail.unit_sets?.[0]?.title ? detail.unit_sets[0].title + ' #' + detail.id : null)
+                || detail.name || 'Unit-' + detail.id,
           online: detail.online_status === 'Online',
           status: detail.online_status || 'Unknown',
           runState,

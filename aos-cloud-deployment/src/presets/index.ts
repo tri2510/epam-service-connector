@@ -181,8 +181,10 @@ publish:
     version: "1.0.0"
 
 configuration:
-    cmd: /kuksa-writer
+    cmd: /signal-writer
     workingDir: '/'
+    env:
+        - "KUKSA_DATABROKER_ADDR=172.17.0.1:55556"
     state:
         filename: default_state.dat
         required: true
@@ -191,15 +193,15 @@ configuration:
         priority: 0
     isResourceLimits: true
     requestedResources:
-        cpu: 2000
-        ram: 50MB
-        storage: 25MB
+        cpu: 1000
+        ram: 10MB
+        storage: 5MB
         state: 512KB
     quotas:
-        cpu: 2000
-        mem: 50MB
+        cpu: 1000
+        mem: 10MB
         state: 512KB
-        storage: 25MB`
+        storage: 5MB`
   },
 
   kuksaReader: {
@@ -316,6 +318,8 @@ publish:
 configuration:
     cmd: /kuksa-reader
     workingDir: '/'
+    env:
+        - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
     state:
         filename: default_state.dat
         required: true
@@ -324,15 +328,15 @@ configuration:
         priority: 0
     isResourceLimits: true
     requestedResources:
-        cpu: 2000
-        ram: 50MB
-        storage: 25MB
+        cpu: 1000
+        ram: 10MB
+        storage: 5MB
         state: 512KB
     quotas:
-        cpu: 2000
-        mem: 50MB
+        cpu: 1000
+        mem: 10MB
         state: 512KB
-        storage: 25MB`
+        storage: 5MB`
   },
 
   evRangeExtender: {
@@ -521,6 +525,8 @@ publish:
 configuration:
     cmd: /ev-range-extender
     workingDir: '/'
+    env:
+        - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
     state:
         filename: default_state.dat
         required: true
@@ -529,15 +535,15 @@ configuration:
         priority: 0
     isResourceLimits: true
     requestedResources:
-        cpu: 2000
-        ram: 50MB
-        storage: 25MB
+        cpu: 1000
+        ram: 10MB
+        storage: 5MB
         state: 512KB
     quotas:
-        cpu: 2000
-        mem: 50MB
+        cpu: 1000
+        mem: 10MB
         state: 512KB
-        storage: 25MB`
+        storage: 5MB`
   },
 
   signalReporter: {
@@ -769,6 +775,9 @@ publish:
 configuration:
     cmd: /signal-reporter
     workingDir: '/'
+    env:
+        - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
+        - "SIGNAL_RELAY_URL=10.0.0.1:9100"
     state:
         filename: default_state.dat
         required: true
@@ -777,14 +786,14 @@ configuration:
         priority: 0
     isResourceLimits: true
     requestedResources:
-        cpu: 2000
-        ram: 50MB
-        storage: 25MB
+        cpu: 1000
+        ram: 10MB
+        storage: 5MB
         state: 512KB
     quotas:
-        cpu: 2000
-        mem: 50MB
+        cpu: 1000
+        mem: 10MB
         state: 512KB
-        storage: 25MB`
+        storage: 5MB`
   }
 }
