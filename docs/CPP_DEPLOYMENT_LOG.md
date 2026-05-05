@@ -317,3 +317,39 @@ All three services (Signal Writer, EV Range Extender, Signal Reporter) now have 
 ---
 
 **Updated:** May 5, 2026 09:54 UTC
+
+---
+
+## Fix: Network Configuration Issue - May 5, 2026
+
+**Problem:** EV Range Extender and Signal Reporter failed to start with error:
+```
+can't run any instances of service: failed to start unit [Operation not permitted]
+```
+
+**Root Cause:** Services had hardcoded KUKSA addresses (`10.0.0.100:55555`) which are VM network addresses, not accessible from AOS containers. AOS containers must use bridge gateway IP `172.17.0.1` to reach host services.
+
+**Solution:** Added environment variables to service YAML configs:
+
+**EV Range Extender:**
+```yaml
+env:
+    - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
+```
+
+**Signal Reporter:**
+```yaml
+env:
+    - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
+    - "SIGNAL_RELAY_URL=10.0.0.1:9100"
+```
+
+**Redeployed Services:**
+- ✅ EV Range Extender v1.0.11 → Service 67065 - **UPLOADED**
+- ✅ Signal Reporter v1.0.11 → Service 67066 - **UPLOADED**
+
+Both services now configured to connect to KUKSA via bridge IP, matching Signal Writer's working configuration.
+
+---
+
+**Updated:** May 5, 2026 09:59 UTC

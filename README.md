@@ -15,8 +15,8 @@ This repository contains two main components:
 
 **Deployed Services:**
 - Signal Writer v1.0.9 → Zonal-Unit (writes Speed, SoC, Temperature) - **RUNNING**
-- EV Range Extender v1.0.10 → HPC-Unit (battery management, power-saving mode) - **UPLOADED**
-- Signal Reporter v1.0.10 → HPC-Unit (relays signals to dashboard) - **UPLOADED**
+- EV Range Extender v1.0.11 → HPC-Unit (battery management, power-saving mode) - **UPLOADED**
+- Signal Reporter v1.0.11 → HPC-Unit (relays signals to dashboard) - **UPLOADED**
 
 **Documentation:**
 - [C++ Deployment Log](docs/CPP_DEPLOYMENT_LOG.md) - Complete build & deployment process

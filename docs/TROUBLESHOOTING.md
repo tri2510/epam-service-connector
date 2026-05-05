@@ -294,3 +294,69 @@ systemctl status kuksa-databroker
 
 **Last Updated:** May 4, 2026  
 **Tested With:** AosCloud v10 API, aos-servicemanager, VirtualBox 7.1.6, KUKSA Databroker 0.5.0
+
+---
+
+## Error: "failed to start unit [Operation not permitted]" - Network Configuration Issue
+
+**Symptom:** Service uploaded successfully but fails to start with:
+```
+can't run any instances of service: failed to start unit [Operation not permitted]
+```
+
+**Root Cause:** Service is configured with wrong KUKSA Databroker address. AOS containers cannot reach VM network addresses (e.g., `10.0.0.100`) directly. They must use the Docker bridge gateway IP `172.17.0.1` to access host services.
+
+**Verification:**
+Check service logs for connection errors:
+```bash
+# In AosCloud OEM Portal, check service logs
+# Or SSH to unit:
+ssh root@<vm-ip>
+journalctl -u aos-servicemanager | grep -E "signal-writer|ev-range|signal-reporter"
+```
+
+**Solution:**
+
+Add environment variable to service YAML configuration:
+
+```yaml
+configuration:
+    cmd: /your-service-binary
+    workingDir: '/'
+    env:
+        - "KUKSA_DATABROKER_ADDR=172.17.0.1:<port>"
+    # ... rest of config
+```
+
+**Port mapping:**
+- Zonal KUKSA: `172.17.0.1:55556`
+- HPC KUKSA: `172.17.0.1:55555`
+
+**Example - Signal Writer (Zonal):**
+```yaml
+env:
+    - "KUKSA_DATABROKER_ADDR=172.17.0.1:55556"
+```
+
+**Example - EV Range Extender (HPC):**
+```yaml
+env:
+    - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
+```
+
+**Example - Signal Reporter (HPC + Relay):**
+```yaml
+env:
+    - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
+    - "SIGNAL_RELAY_URL=10.0.0.1:9100"
+```
+
+After updating YAML:
+1. Increment version number in `publish:` section
+2. Rebuild and redeploy service to AosCloud
+3. Verify service starts successfully
+
+---
+
+**Last Updated:** May 5, 2026  
+**Tested With:** AosCloud v10 API, aos-servicemanager, KUKSA Databroker 0.5.0

@@ -12,11 +12,14 @@ publish:
     url: aoscloud.io
     service_uid: 242dd4d4-7236-432d-88b9-ba9bbb3288f8
     tls_pkcs12: aos-user-sp.p12
-    version: "1.0.10"
+    version: "1.0.11"
 
 configuration:
     cmd: /signal-reporter
     workingDir: '/'
+    env:
+        - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
+        - "SIGNAL_RELAY_URL=10.0.0.1:9100"
     state:
         filename: default_state.dat
         required: true
