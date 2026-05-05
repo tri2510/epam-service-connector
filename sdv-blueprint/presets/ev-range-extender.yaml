@@ -12,7 +12,7 @@ publish:
     url: aoscloud.io
     service_uid: bb539aaa-682c-4a35-b492-19abed3118ff
     tls_pkcs12: aos-user-sp.p12
-    version: "1.0.4"
+    version: "1.0.10"
 
 configuration:
     cmd: /ev-range-extender

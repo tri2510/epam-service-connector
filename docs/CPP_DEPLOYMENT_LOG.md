@@ -285,3 +285,35 @@ done
 
 **Deployment completed:** May 4, 2026 07:57 UTC  
 **Total time:** ~35 minutes (static library setup + build + deploy for 3 services)
+
+---
+
+## Additional Deployment - May 5, 2026
+
+**Deployed Services:**
+- ✅ EV Range Extender v1.0.10 → Service 67065 (19MB static binary) - **UPLOADED**
+- ✅ Signal Reporter v1.0.10 → Service 67066 (19MB static binary) - **UPLOADED**
+
+**Build Process:**
+Rebuilt all services in new broadcaster container after proxy configuration fix.
+```bash
+docker exec aos-broadcaster bash -c "
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY &&
+cd /workspace/sdv-blueprint && make all
+"
+```
+
+**Deployment:**
+Both services signed and uploaded successfully to AosCloud with version 1.0.10.
+
+**Status:**
+All three services (Signal Writer, EV Range Extender, Signal Reporter) now have static binaries uploaded to AosCloud and ready for deployment to edge units.
+
+**Next Steps:**
+- Assign EV Range Extender and Signal Reporter to HPC-Subject in AosCloud OEM Portal
+- Monitor service deployment to HPC-Unit
+- Verify services start successfully and connect to KUKSA Databroker
+
+---
+
+**Updated:** May 5, 2026 09:54 UTC
