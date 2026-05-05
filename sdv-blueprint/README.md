@@ -207,14 +207,28 @@ for port, name in [(55555, 'HPC'), (55556, 'Zonal')]:
 
 ## Step 2: Create Services in AosCloud
 
-### 2.1 Build the toolchain Docker image (one-time)
+### 2.1 Get the toolchain Docker image
 
-The image includes all build tools (g++, protoc, gRPC, socket.io) out of the box:
+**Option A: Pull from GitHub Container Registry (recommended)**
+
+```bash
+docker pull ghcr.io/eclipse-autowrx/epam-service-connector/aos-edge-toolchain:latest
+docker tag ghcr.io/eclipse-autowrx/epam-service-connector/aos-edge-toolchain:latest aos-edge-toolchain:latest
+```
+
+**Option B: Build locally**
 
 ```bash
 cd aos-edge-toolchain
-docker build -t aos-edge-toolchain:latest .
+# If behind a corporate proxy, clear proxy vars first:
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY FTP_PROXY ftp_proxy
+docker build \
+  --build-arg HTTP_PROXY= --build-arg HTTPS_PROXY= \
+  --build-arg http_proxy= --build-arg https_proxy= \
+  -t aos-edge-toolchain:latest .
 ```
+
+The image includes all build tools (g++, protoc, gRPC, socket.io) out of the box — no runtime `apt install` needed.
 
 ### 2.2 Start the broadcaster
 
