@@ -558,6 +558,44 @@ export default function Page({ data, config }: PluginProps) {
         setConnectionStatus('connected')
         refreshApps()
         startDockerPolling()
+
+        const pendingBuildId = localStorage.getItem('aos_build_id')
+        if (pendingBuildId && service) {
+          addLog(`[Build] Recovering build ${pendingBuildId}...`)
+          setIsBuilding(true)
+          setBuildStatus('Recovering build status...')
+          service.getBuildStatus(pendingBuildId).then((res: any) => {
+            if (res.build && res.build.logs) {
+              const stageLabels: Record<string, string> = {
+                init: 'Init', config: 'Config', proto: 'Proto',
+                compile: 'Compile', bundle: 'Bundle',
+                sign: 'Sign', upload: 'Publish', error: 'Error'
+              }
+              res.build.logs.forEach((entry: any) => {
+                const label = stageLabels[entry.stage] || entry.stage || 'Build'
+                addLog(`[${label}] ${entry.message}`)
+              })
+              if (res.build.status === 'success') {
+                setBuildStatus('Build completed successfully!')
+                setIsBuilding(false)
+                localStorage.removeItem('aos_build_id')
+              } else if (res.build.status === 'error') {
+                setBuildStatus('Build failed')
+                setIsBuilding(false)
+                localStorage.removeItem('aos_build_id')
+              } else {
+                setBuildStatus('Build still in progress...')
+              }
+            } else {
+              addLog(`[Build] Build ${pendingBuildId} not found on server`)
+              setIsBuilding(false)
+              localStorage.removeItem('aos_build_id')
+            }
+          }).catch(() => {
+            setIsBuilding(false)
+            localStorage.removeItem('aos_build_id')
+          })
+        }
         setTimeout(() => {
           checkCertificate()
           if (!aosCloudLoadedRef.current) {
@@ -934,21 +972,27 @@ export default function Page({ data, config }: PluginProps) {
         addLog(`[Build] ${response.message || 'Build started: ' + response.appId}`)
       }
 
+      if (response.buildId) {
+        localStorage.setItem('aos_build_id', response.buildId)
+      }
+
       if (response.status === 'success') {
         setBuildStatus('Build completed successfully!')
         setIsBuilding(false)
+        localStorage.removeItem('aos_build_id')
         refreshApps()
       } else if (response.status === 'error') {
-        setBuildStatus(`Build failed: ${response.message || 'Unknown error'}`)
+        setBuildStatus(`Build failed`)
         setIsBuilding(false)
+        localStorage.removeItem('aos_build_id')
       } else {
-        // Building in progress, wait for deploy status callback
         setBuildStatus('Building...')
       }
     } catch (err: any) {
       addLog(`[Error] Build failed: ${err.message}`)
       setBuildStatus(`Build failed: ${err.message}`)
       setIsBuilding(false)
+      localStorage.removeItem('aos_build_id')
     }
   }
 

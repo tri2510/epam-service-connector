@@ -305,6 +305,11 @@ export class AosService {
     return this.sendCommand('aos_get_service_log_status', {})
   }
 
+  // Get build status (by buildId or all)
+  async getBuildStatus(buildId?: string): Promise<any> {
+    return this.sendCommand('aos_get_build_status', { buildId })
+  }
+
   // Upload a .p12 certificate to the toolchain container
   async uploadCertificate(certBase64: string, certName: string = 'aos-user-sp'): Promise<any> {
     return this.sendCommand('aos_upload_cert', { certData: certBase64, certName })

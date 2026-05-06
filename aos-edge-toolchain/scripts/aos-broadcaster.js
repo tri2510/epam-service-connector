@@ -171,6 +171,7 @@ async function main() {
         'aos_get_alerts',
         'aos_request_service_log',
         'aos_get_service_log_status',
+        'aos_get_build_status',
         'aos_signal_stream'
       ],
       type: 'aos-edge-toolchain',
@@ -251,6 +252,15 @@ async function main() {
           break;
         case 'aos_get_service_log_status':
           response = await handleGetServiceLogStatus(data);
+          break;
+        case 'aos_get_build_status':
+          response = {
+            kit_id: instanceId,
+            type: 'aos_get_build_status',
+            status: 'success',
+            build: data.buildId ? getBuildStatus(data.buildId) : null,
+            builds: !data.buildId ? getBuildStatus() : undefined
+          };
           break;
         case 'aos_signal_stream':
           response = {
@@ -349,12 +359,16 @@ async function bundleDynamicLibs(binaryPath, srcDir) {
   }
 }
 
-const buildLog = [];
-function emitProgress(stage, message, progress) {
+const crypto = require('crypto');
+const BUILD_HISTORY_MAX = 20;
+const buildHistory = new Map();
+
+function emitProgress(buildId, stage, message, progress) {
   const entry = { stage, message, progress, ts: Date.now() };
-  buildLog.push(entry);
-  const payload = { kit_id: instanceId, type: 'aos-build-progress', ...entry };
-  console.log(`[Build] [${stage}] ${message}`);
+  const build = buildHistory.get(buildId);
+  if (build) build.logs.push(entry);
+  const payload = { kit_id: instanceId, type: 'aos-build-progress', buildId, ...entry };
+  console.log(`[Build:${buildId}] [${stage}] ${message}`);
   if (socket && socket.connected) {
     socket.emit('broadcastToClient', payload);
   }
@@ -363,36 +377,58 @@ function emitProgress(stage, message, progress) {
   }
 }
 
+function getBuildStatus(buildId) {
+  if (buildId) {
+    const b = buildHistory.get(buildId);
+    return b ? { ...b, logs: b.logs.slice() } : null;
+  }
+  const all = [];
+  for (const [id, b] of buildHistory) {
+    all.push({ buildId: id, appName: b.appName, status: b.status, startedAt: b.startedAt, finishedAt: b.finishedAt, logCount: b.logs.length });
+  }
+  return all;
+}
+
 async function handleBuildDeploy(data) {
   const appName = data.name || 'hello-aos';
   const cppCode = data.cppCode || '';
   const yamlConfig = data.yamlConfig || '';
 
-  buildLog.length = 0;
-  emitProgress('init', `Starting build for ${appName}`, 0);
+  const buildId = crypto.randomBytes(6).toString('hex');
+  const buildDir = path.join('/workspace/builds', buildId);
+
+  buildHistory.set(buildId, {
+    appName, status: 'building', logs: [],
+    startedAt: Date.now(), finishedAt: null
+  });
+  if (buildHistory.size > BUILD_HISTORY_MAX) {
+    const oldest = buildHistory.keys().next().value;
+    buildHistory.delete(oldest);
+  }
+
+  emitProgress(buildId, 'init', `Starting build for ${appName} (build: ${buildId})`, 0);
 
   try {
-    await execAsync('rm -rf /workspace/src /workspace/meta /workspace/project /workspace/generated', { cwd: workspaceDir });
-    await fs.mkdir(path.join(workspaceDir, 'src'), { recursive: true });
-    await fs.mkdir(path.join(workspaceDir, 'meta'), { recursive: true });
+    await fs.mkdir(path.join(buildDir, 'src'), { recursive: true });
+    await fs.mkdir(path.join(buildDir, 'meta'), { recursive: true });
 
-    await fs.writeFile(path.join(workspaceDir, 'src/main.cpp'), cppCode);
-    await fs.writeFile(path.join(workspaceDir, 'meta/config.yaml'), yamlConfig);
-    await fs.writeFile(path.join(workspaceDir, 'meta/default_state.dat'), '');
+    await fs.writeFile(path.join(buildDir, 'src/main.cpp'), cppCode);
+    await fs.writeFile(path.join(buildDir, 'meta/config.yaml'), yamlConfig);
+    await fs.writeFile(path.join(buildDir, 'meta/default_state.dat'), '');
 
     const certSrc = '/root/.aos/security/aos-user-sp.p12';
-    try { await fs.copyFile(certSrc, path.join(workspaceDir, 'aos-user-sp.p12')); } catch (e) { /* ok */ }
+    try { await fs.copyFile(certSrc, path.join(buildDir, 'aos-user-sp.p12')); } catch (e) { /* ok */ }
 
     const targetArch = detectArch(yamlConfig);
     const cxx = compilerForArch(targetArch);
-    emitProgress('config', `Target: ${targetArch}, compiler: ${cxx}`, 10);
+    emitProgress(buildId, 'config', `Target: ${targetArch}, compiler: ${cxx}`, 10);
 
     const isGrpcProject = cppCode.includes('grpcpp') || cppCode.includes('grpc.pb.h');
-    const builtBinary = path.join(workspaceDir, appName);
+    const builtBinary = path.join(buildDir, appName);
 
     if (isGrpcProject) {
-      emitProgress('proto', 'Generating gRPC proto stubs...', 15);
-      const genDir = path.join(workspaceDir, 'generated');
+      emitProgress(buildId, 'proto', 'Generating gRPC proto stubs...', 15);
+      const genDir = path.join(buildDir, 'generated');
       await fs.mkdir(path.join(genDir, 'kuksa/val/v1'), { recursive: true });
       const protoDir = '/usr/local/share/kuksa-proto';
       const grpcPlugin = (await execAsync('which grpc_cpp_plugin').catch(() => ({stdout:'/usr/bin/grpc_cpp_plugin'}))).stdout.trim();
@@ -400,86 +436,85 @@ async function handleBuildDeploy(data) {
       for (const proto of ['types', 'val']) {
         await execAsync(`protoc --proto_path=${protoDir} --cpp_out=${genDir} --grpc_out=${genDir} --plugin=protoc-gen-grpc=${grpcPlugin} ${protoDir}/kuksa/val/v1/${proto}.proto`);
       }
-      emitProgress('proto', 'Proto stubs generated', 20);
+      emitProgress(buildId, 'proto', 'Proto stubs generated', 20);
 
       const grpcFlags = targetArch === 'x86_64'
         ? '$(pkg-config --cflags --libs grpc++ protobuf) -lpthread'
         : '-I/opt/grpc-aarch64/include -L/opt/grpc-aarch64/lib -lgrpc++ -lprotobuf -lpthread';
       const staticFlag = targetArch === 'x86_64' ? '' : '-static';
       const compileCmd = `${cxx} -std=c++17 -O2 ${staticFlag} -I${genDir} ` +
-        `${workspaceDir}/src/main.cpp ` +
+        `${buildDir}/src/main.cpp ` +
         `${genDir}/kuksa/val/v1/types.pb.cc ${genDir}/kuksa/val/v1/types.grpc.pb.cc ` +
         `${genDir}/kuksa/val/v1/val.pb.cc ${genDir}/kuksa/val/v1/val.grpc.pb.cc ` +
         `${grpcFlags} -o ${builtBinary}`;
-      emitProgress('compile', 'Compiling gRPC application...', 25);
-      await execAsync(compileCmd, { cwd: workspaceDir, env: { ...process.env }, timeout: 300000 });
+      emitProgress(buildId, 'compile', 'Compiling gRPC application...', 25);
+      await execAsync(compileCmd, { cwd: buildDir, env: { ...process.env }, timeout: 300000 });
     } else {
       const staticFlag = '-static';
-      const compileCmd = `${cxx} ${staticFlag} -std=c++17 -O2 ${workspaceDir}/src/main.cpp -o ${builtBinary}`;
-      emitProgress('compile', 'Compiling application...', 25);
-      await execAsync(compileCmd, { cwd: workspaceDir, timeout: 60000 });
+      const compileCmd = `${cxx} ${staticFlag} -std=c++17 -O2 ${buildDir}/src/main.cpp -o ${builtBinary}`;
+      emitProgress(buildId, 'compile', 'Compiling application...', 25);
+      await execAsync(compileCmd, { cwd: buildDir, timeout: 60000 });
     }
 
     const { stdout: fileOut } = await execAsync(`file ${builtBinary}`);
-    emitProgress('compile', `Binary: ${fileOut.trim().split(':').pop().trim().slice(0, 80)}`, 50);
+    emitProgress(buildId, 'compile', `Binary: ${fileOut.trim().split(':').pop().trim().slice(0, 80)}`, 50);
 
-    await fs.copyFile(builtBinary, path.join(workspaceDir, 'src', appName));
-    try { await fs.unlink(path.join(workspaceDir, 'src/main.cpp')); } catch (e) { /* ok */ }
+    await fs.copyFile(builtBinary, path.join(buildDir, 'src', appName));
+    try { await fs.unlink(path.join(buildDir, 'src/main.cpp')); } catch (e) { /* ok */ }
 
     if (isGrpcProject && targetArch === 'x86_64') {
-      emitProgress('bundle', 'Bundling dynamic libraries...', 55);
-      await bundleDynamicLibs(path.join(workspaceDir, 'src', appName), path.join(workspaceDir, 'src'));
+      emitProgress(buildId, 'bundle', 'Bundling dynamic libraries...', 55);
+      await bundleDynamicLibs(path.join(buildDir, 'src', appName), path.join(buildDir, 'src'));
     }
 
-    emitProgress('sign', 'Signing service package...', 60);
-    const { stdout: signOut, stderr: signErr } = await execAsync('aos-signer sign', { cwd: workspaceDir, env: { ...process.env } });
+    emitProgress(buildId, 'sign', 'Signing service package...', 60);
+    await execAsync('aos-signer sign', { cwd: buildDir, env: { ...process.env } });
 
-    const pkgStats = await fs.stat(path.join(workspaceDir, 'service.tar.gz')).catch(() => null);
+    const pkgStats = await fs.stat(path.join(buildDir, 'service.tar.gz')).catch(() => null);
     if (!pkgStats) throw new Error('Package not created after signing');
     const sizeMB = (pkgStats.size / (1024 * 1024)).toFixed(1);
-    emitProgress('sign', `Package signed: ${sizeMB} MB`, 75);
+    emitProgress(buildId, 'sign', `Package signed: ${sizeMB} MB`, 75);
 
-    emitProgress('upload', 'Uploading to AosCloud...', 80);
+    emitProgress(buildId, 'upload', 'Uploading to AosCloud...', 80);
     try {
-      const { stdout: uploadOut, stderr: uploadStderr } = await execAsync('aos-signer upload', { cwd: workspaceDir, env: { ...process.env } });
+      const { stdout: uploadOut, stderr: uploadStderr } = await execAsync('aos-signer upload', { cwd: buildDir, env: { ...process.env } });
       const fullOutput = (uploadOut + ' ' + (uploadStderr || '')).trim();
       if (fullOutput.toLowerCase().includes('error') || fullOutput.toLowerCase().includes('failed')) {
-        emitProgress('upload', `Upload rejected: ${fullOutput.slice(-200)}`, -1);
-        return {
-          kit_id: instanceId, type: 'aos_build_deploy', status: 'error',
-          appId: appName, message: `Upload rejected by AosCloud: ${fullOutput.slice(-200)}`
-        };
+        emitProgress(buildId, 'upload', `Upload rejected: ${fullOutput.slice(-200)}`, -1);
+        const build = buildHistory.get(buildId);
+        if (build) { build.status = 'error'; build.finishedAt = Date.now(); }
+        const logSummary = (build?.logs || []).map(e => `[${e.stage}] ${e.message}`).join('\n');
+        return { kit_id: instanceId, type: 'aos_build_deploy', status: 'error', buildId, appId: appName, message: logSummary };
       }
-      emitProgress('upload', 'Upload complete — service published to AosCloud', 100);
+      emitProgress(buildId, 'upload', 'Upload complete — service published to AosCloud', 100);
     } catch (uploadErr) {
       const errMsg = uploadErr.stderr || uploadErr.stdout || uploadErr.message || 'Unknown upload error';
-      emitProgress('upload', `Upload failed: ${errMsg.slice(-200)}`, -1);
-      return {
-        kit_id: instanceId, type: 'aos_build_deploy', status: 'error',
-        appId: appName, message: `Upload failed: ${errMsg.slice(-200)}`
-      };
+      emitProgress(buildId, 'upload', `Upload failed: ${errMsg.slice(-200)}`, -1);
+      const build = buildHistory.get(buildId);
+      if (build) { build.status = 'error'; build.finishedAt = Date.now(); }
+      const logSummary = (build?.logs || []).map(e => `[${e.stage}] ${e.message}`).join('\n');
+      return { kit_id: instanceId, type: 'aos_build_deploy', status: 'error', buildId, appId: appName, message: logSummary };
     }
 
-    const logSummary = buildLog.map(e => `[${e.stage}] ${e.message}`).join('\n');
+    const build = buildHistory.get(buildId);
+    if (build) { build.status = 'success'; build.finishedAt = Date.now(); }
+    const logSummary = (build?.logs || []).map(e => `[${e.stage}] ${e.message}`).join('\n');
     return {
-      kit_id: instanceId,
-      type: 'aos_build_deploy',
-      status: 'success',
-      appId: appName,
-      executionId: appName,
-      message: logSummary
+      kit_id: instanceId, type: 'aos_build_deploy', status: 'success',
+      buildId, appId: appName, executionId: appName, message: logSummary
     };
 
   } catch (error) {
-    emitProgress('error', error.message, -1);
-    const logSummary = buildLog.map(e => `[${e.stage}] ${e.message}`).join('\n');
+    emitProgress(buildId, 'error', error.message, -1);
+    const build = buildHistory.get(buildId);
+    if (build) { build.status = 'error'; build.finishedAt = Date.now(); }
+    const logSummary = (build?.logs || []).map(e => `[${e.stage}] ${e.message}`).join('\n');
     return {
-      kit_id: instanceId,
-      type: 'aos_build_deploy',
-      status: 'error',
-      message: logSummary + '\n[error] ' + error.message,
-      appId: appName
+      kit_id: instanceId, type: 'aos_build_deploy', status: 'error',
+      buildId, message: logSummary, appId: appName
     };
+  } finally {
+    await execAsync(`rm -rf ${buildDir}`).catch(() => {});
   }
 }
 
