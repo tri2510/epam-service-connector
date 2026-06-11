@@ -26279,7 +26279,7 @@ items:
 #include "kuksa/val/v1/val.grpc.pb.h"
 #include "kuksa/val/v1/types.pb.h"
 
-#define VERSION "1.0.0"
+#define VERSION "1.0.17"
 
 static std::string format_value(const kuksa::val::v1::Datapoint& dp) {
     switch (dp.value_case()) {
@@ -26483,11 +26483,11 @@ publish:
 
 items:
   - identity:
-      type: "service"
-      codename: "242dd4d4-7236-432d-88b9-ba9bbb3288f8"
+      type: service
+      id: 242dd4d4-7236-432d-88b9-ba9bbb3288f8
       title: "Signal Reporter - Dashboard Relay"
       description: "Subscribes to all 9 vehicle signals and relays to dashboard via HTTP"
-    version: "1.0.0"
+    version: "1.0.17"
     sourceFolder: "signal-reporter"
 
     images:
