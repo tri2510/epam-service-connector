@@ -1071,7 +1071,7 @@ publish:
 items:
   - identity:
       type: "service"
-      codename: "signal-reporter"
+      codename: "242dd4d4-7236-432d-88b9-ba9bbb3288f8"
       title: "Signal Reporter - Dashboard Relay"
       description: "Subscribes to all 9 vehicle signals and relays to dashboard via HTTP"
     version: "1.0.0"
