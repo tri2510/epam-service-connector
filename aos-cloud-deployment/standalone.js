@@ -25431,7 +25431,7 @@
     helloAos: {
       name: "Hello AOS",
       appName: "hello-aos",
-      description: "Simple hello world application",
+      description: "Simple hello world application (aos-signer 2.x format)",
       cpp: `#include <iostream>
 #include <thread>
 #include <chrono>
@@ -25456,42 +25456,51 @@ int main() {
 
     return 0;
 }`,
-      yaml: `publisher:
-    author: "developer@example.com"
-    company: "Example Corp"
+      yaml: `# Configuration for AosEdge Update Bundle (schemaVersion: 2)
+schemaVersion: 2
 
-build:
-    os: linux
-    arch: x86_64
-    sign_pkcs12: aos-user-sp.p12
-    symlinks: copy
+publisher:
+  author: "developer@example.com"
+  company: "Example Corp"
 
 publish:
-    url: aoscloud.io
-    service_uid: c0528145-b393-44c6-aeaa-b26bc560acee
-    tls_pkcs12: aos-user-sp.p12
-    version: "1.0.0"
+  tlsKey: "aos-user-sp.p12"
+  domain: "aoscloud.io"
 
-configuration:
-    cmd: /hello-aos
-    workingDir: '/'
-    state:
-        filename: default_state.dat
-        required: true
-    instances:
+items:
+  - identity:
+      type: "service"
+      codename: "hello-aos"
+      title: "Hello AOS Service"
+      description: "Simple hello world application"
+    version: "1.0.0"
+    sourceFolder: "hello-aos"
+
+    images:
+      - sourceFolder: "src_x86_64"
+        archInfo:
+          architecture: "amd64"
+        workingDir: "/"
+        cmd: "/hello-aos"
+
+      - sourceFolder: "src_aarch64"
+        archInfo:
+          architecture: "arm64"
+        workingDir: "/"
+        cmd: "/hello-aos"
+
+    configuration:
+      workingDir: "/"
+      cmd: "/hello-aos"
+      instances:
         minInstances: 1
-        priority: 0
-    isResourceLimits: true
-    requestedResources:
-        cpu: 1000
-        ram: 10MB
-        storage: 5MB
-        state: 512KB
-    quotas:
-        cpu: 1000
-        mem: 10MB
-        state: 512KB
-        storage: 5MB`
+        priority: 10
+      quotas:
+        cpuLimit: 1000
+        ramLimit: 10MB
+        storageLimit: 5MB
+        stateLimit: 512KB
+        tmpLimit: 256MiB`
     },
     kuksaWriter: {
       name: "Signal Writer - Zonal Domain",
@@ -25581,44 +25590,57 @@ int main(int argc, char* argv[]) {
     }
     return 0;
 }`,
-      yaml: `publisher:
-    author: "developer@example.com"
-    company: "Example Corp"
+      yaml: `# Configuration for AosEdge Update Bundle (schemaVersion: 2)
+schemaVersion: 2
 
-build:
-    os: linux
-    arch: x86_64
-    sign_pkcs12: aos-user-sp.p12
-    symlinks: copy
+publisher:
+  author: "developer@example.com"
+  company: "Example Corp"
 
 publish:
-    url: aoscloud.io
-    service_uid: 242a46c7-f237-40e3-a37e-40529a39bf85
-    tls_pkcs12: aos-user-sp.p12
-    version: "1.0.0"
+  tlsKey: "aos-user-sp.p12"
+  domain: "aoscloud.io"
 
-configuration:
-    cmd: /signal-writer
-    workingDir: '/'
-    env:
+items:
+  - identity:
+      type: "service"
+      codename: "signal-writer"
+      title: "Signal Writer - Zonal Domain"
+      description: "Writes Speed, SoC, AmbientTemp to KUKSA Databroker"
+    version: "1.0.0"
+    sourceFolder: "signal-writer"
+
+    images:
+      - sourceFolder: "src_x86_64"
+        archInfo:
+          architecture: "amd64"
+        workingDir: "/"
+        cmd: "/signal-writer"
+        env:
+          - "KUKSA_DATABROKER_ADDR=172.17.0.1:55556"
+
+      - sourceFolder: "src_aarch64"
+        archInfo:
+          architecture: "arm64"
+        workingDir: "/"
+        cmd: "/signal-writer"
+        env:
+          - "KUKSA_DATABROKER_ADDR=172.17.0.1:55556"
+
+    configuration:
+      workingDir: "/"
+      cmd: "/signal-writer"
+      env:
         - "KUKSA_DATABROKER_ADDR=172.17.0.1:55556"
-    state:
-        filename: default_state.dat
-        required: true
-    instances:
+      instances:
         minInstances: 1
-        priority: 0
-    isResourceLimits: true
-    requestedResources:
-        cpu: 1000
-        ram: 10MB
-        storage: 5MB
-        state: 512KB
-    quotas:
-        cpu: 1000
-        mem: 10MB
-        state: 512KB
-        storage: 5MB`
+        priority: 10
+      quotas:
+        cpuLimit: 1000
+        ramLimit: 10MB
+        storageLimit: 5MB
+        stateLimit: 512KB
+        tmpLimit: 256MiB`
     },
     kuksaReader: {
       name: "KUKSA Reader",
@@ -25715,44 +25737,57 @@ int main(int argc, char* argv[]) {
     }
     return 0;
 }`,
-      yaml: `publisher:
-    author: "developer@example.com"
-    company: "Example Corp"
+      yaml: `# Configuration for AosEdge Update Bundle (schemaVersion: 2)
+schemaVersion: 2
 
-build:
-    os: linux
-    arch: x86_64
-    sign_pkcs12: aos-user-sp.p12
-    symlinks: copy
+publisher:
+  author: "developer@example.com"
+  company: "Example Corp"
 
 publish:
-    url: aoscloud.io
-    service_uid: d8e4ffa0-8cb6-4f9c-abfe-f0cfdee7150d
-    tls_pkcs12: aos-user-sp.p12
-    version: "1.0.0"
+  tlsKey: "aos-user-sp.p12"
+  domain: "aoscloud.io"
 
-configuration:
-    cmd: /kuksa-reader
-    workingDir: '/'
-    env:
+items:
+  - identity:
+      type: "service"
+      codename: "kuksa-reader"
+      title: "KUKSA Reader"
+      description: "Subscribes to vehicle signals from KUKSA Databroker"
+    version: "1.0.0"
+    sourceFolder: "kuksa-reader"
+
+    images:
+      - sourceFolder: "src_x86_64"
+        archInfo:
+          architecture: "amd64"
+        workingDir: "/"
+        cmd: "/kuksa-reader"
+        env:
+          - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
+
+      - sourceFolder: "src_aarch64"
+        archInfo:
+          architecture: "arm64"
+        workingDir: "/"
+        cmd: "/kuksa-reader"
+        env:
+          - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
+
+    configuration:
+      workingDir: "/"
+      cmd: "/kuksa-reader"
+      env:
         - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
-    state:
-        filename: default_state.dat
-        required: true
-    instances:
+      instances:
         minInstances: 1
-        priority: 0
-    isResourceLimits: true
-    requestedResources:
-        cpu: 1000
-        ram: 10MB
-        storage: 5MB
-        state: 512KB
-    quotas:
-        cpu: 1000
-        mem: 10MB
-        state: 512KB
-        storage: 5MB`
+        priority: 10
+      quotas:
+        cpuLimit: 1000
+        ramLimit: 10MB
+        storageLimit: 5MB
+        stateLimit: 512KB
+        tmpLimit: 256MiB`
     },
     evRangeExtender: {
       name: "EV Range Extender - HPC Domain",
@@ -25921,44 +25956,57 @@ int main(int argc, char* argv[]) {
     }
     return 0;
 }`,
-      yaml: `publisher:
-    author: "developer@example.com"
-    company: "Example Corp"
+      yaml: `# Configuration for AosEdge Update Bundle (schemaVersion: 2)
+schemaVersion: 2
 
-build:
-    os: linux
-    arch: x86_64
-    sign_pkcs12: aos-user-sp.p12
-    symlinks: copy
+publisher:
+  author: "developer@example.com"
+  company: "Example Corp"
 
 publish:
-    url: aoscloud.io
-    service_uid: bb539aaa-682c-4a35-b492-19abed3118ff
-    tls_pkcs12: aos-user-sp.p12
-    version: "1.0.0"
+  tlsKey: "aos-user-sp.p12"
+  domain: "aoscloud.io"
 
-configuration:
-    cmd: /ev-range-extender
-    workingDir: '/'
-    env:
+items:
+  - identity:
+      type: "service"
+      codename: "ev-range-extender"
+      title: "EV Range Extender - HPC Domain"
+      description: "Battery management, range computation, power-saving mode control"
+    version: "1.0.0"
+    sourceFolder: "ev-range-extender"
+
+    images:
+      - sourceFolder: "src_x86_64"
+        archInfo:
+          architecture: "amd64"
+        workingDir: "/"
+        cmd: "/ev-range-extender"
+        env:
+          - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
+
+      - sourceFolder: "src_aarch64"
+        archInfo:
+          architecture: "arm64"
+        workingDir: "/"
+        cmd: "/ev-range-extender"
+        env:
+          - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
+
+    configuration:
+      workingDir: "/"
+      cmd: "/ev-range-extender"
+      env:
         - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
-    state:
-        filename: default_state.dat
-        required: true
-    instances:
+      instances:
         minInstances: 1
-        priority: 0
-    isResourceLimits: true
-    requestedResources:
-        cpu: 1000
-        ram: 10MB
-        storage: 5MB
-        state: 512KB
-    quotas:
-        cpu: 1000
-        mem: 10MB
-        state: 512KB
-        storage: 5MB`
+        priority: 10
+      quotas:
+        cpuLimit: 1000
+        ramLimit: 10MB
+        storageLimit: 5MB
+        stateLimit: 512KB
+        tmpLimit: 256MiB`
     },
     batteryEnergySaver: {
       name: "Battery Energy Saver - HPC Domain",
@@ -26154,46 +26202,63 @@ int main(int argc, char* argv[]) {
     std::cout << "Battery Energy Saver: shutdown, no signal reset needed." << std::endl;
     return 0;
 }`,
-      yaml: `publisher:
-    author: "developer@example.com"
-    company: "Example Corp"
+      yaml: `# Configuration for AosEdge Update Bundle (schemaVersion: 2)
+schemaVersion: 2
 
-build:
-    os: linux
-    arch: x86_64
-    sign_pkcs12: aos-user-sp.p12
-    symlinks: copy
+publisher:
+  author: "developer@example.com"
+  company: "Example Corp"
 
 publish:
-    url: aoscloud.io
-    service_uid: 00000000-0000-0000-0000-000000000000
-    tls_pkcs12: aos-user-sp.p12
-    version: "1.0.0"
+  tlsKey: "aos-user-sp.p12"
+  domain: "aoscloud.io"
 
-configuration:
-    cmd: /battery-energy-saver
-    workingDir: '/'
-    env:
+items:
+  - identity:
+      type: "service"
+      codename: "battery-energy-saver"
+      title: "Battery Energy Saver - HPC Domain"
+      description: "Forces HVAC and seat heating/cooling off when SoC drops below thresholds"
+    version: "1.0.0"
+    sourceFolder: "battery-energy-saver"
+
+    images:
+      - sourceFolder: "src_x86_64"
+        archInfo:
+          architecture: "amd64"
+        workingDir: "/"
+        cmd: "/battery-energy-saver"
+        env:
+          - "KUKSA_DATABROKER_ADDR=10.189.232.240:55555"
+          - "HVAC_OFF_THRESHOLD=50.0"
+          - "SEAT_OFF_THRESHOLD=30.0"
+
+      - sourceFolder: "src_aarch64"
+        archInfo:
+          architecture: "arm64"
+        workingDir: "/"
+        cmd: "/battery-energy-saver"
+        env:
+          - "KUKSA_DATABROKER_ADDR=10.189.232.240:55555"
+          - "HVAC_OFF_THRESHOLD=50.0"
+          - "SEAT_OFF_THRESHOLD=30.0"
+
+    configuration:
+      workingDir: "/"
+      cmd: "/battery-energy-saver"
+      env:
         - "KUKSA_DATABROKER_ADDR=10.189.232.240:55555"
         - "HVAC_OFF_THRESHOLD=50.0"
         - "SEAT_OFF_THRESHOLD=30.0"
-    state:
-        filename: default_state.dat
-        required: true
-    instances:
+      instances:
         minInstances: 1
-        priority: 0
-    isResourceLimits: true
-    requestedResources:
-        cpu: 1000
-        ram: 10MB
-        storage: 5MB
-        state: 512KB
-    quotas:
-        cpu: 1000
-        mem: 10MB
-        state: 512KB
-        storage: 5MB`
+        priority: 10
+      quotas:
+        cpuLimit: 1000
+        ramLimit: 10MB
+        storageLimit: 5MB
+        stateLimit: 512KB
+        tmpLimit: 256MiB`
     },
     signalReporter: {
       name: "Signal Reporter - Dashboard Relay",
@@ -26405,51 +26470,172 @@ int main(int argc, char* argv[]) {
     }
     return 0;
 }`,
-      yaml: `publisher:
-    author: "developer@example.com"
-    company: "Example Corp"
+      yaml: `# Configuration for AosEdge Update Bundle (schemaVersion: 2)
+schemaVersion: 2
 
-build:
-    os: linux
-    arch: x86_64
-    sign_pkcs12: aos-user-sp.p12
-    symlinks: copy
+publisher:
+  author: "developer@example.com"
+  company: "Example Corp"
 
 publish:
-    url: aoscloud.io
-    service_uid: 242dd4d4-7236-432d-88b9-ba9bbb3288f8
-    tls_pkcs12: aos-user-sp.p12
-    version: "1.0.0"
+  tlsKey: "aos-user-sp.p12"
+  domain: "aoscloud.io"
 
-configuration:
-    cmd: /signal-reporter
-    workingDir: '/'
-    env:
+items:
+  - identity:
+      type: "service"
+      codename: "signal-reporter"
+      title: "Signal Reporter - Dashboard Relay"
+      description: "Subscribes to all 9 vehicle signals and relays to dashboard via HTTP"
+    version: "1.0.0"
+    sourceFolder: "signal-reporter"
+
+    images:
+      - sourceFolder: "src_x86_64"
+        archInfo:
+          architecture: "amd64"
+        workingDir: "/"
+        cmd: "/signal-reporter"
+        env:
+          - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
+          - "SIGNAL_RELAY_URL=10.0.0.1:9100"
+
+      - sourceFolder: "src_aarch64"
+        archInfo:
+          architecture: "arm64"
+        workingDir: "/"
+        cmd: "/signal-reporter"
+        env:
+          - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
+          - "SIGNAL_RELAY_URL=10.0.0.1:9100"
+
+    configuration:
+      workingDir: "/"
+      cmd: "/signal-reporter"
+      env:
         - "KUKSA_DATABROKER_ADDR=172.17.0.1:55555"
         - "SIGNAL_RELAY_URL=10.0.0.1:9100"
-    state:
-        filename: default_state.dat
-        required: true
-    instances:
+      instances:
         minInstances: 1
-        priority: 0
-    isResourceLimits: true
-    requestedResources:
-        cpu: 1000
-        ram: 10MB
-        storage: 5MB
-        state: 512KB
-    quotas:
-        cpu: 1000
-        mem: 10MB
-        state: 512KB
-        storage: 5MB`
+        priority: 10
+      quotas:
+        cpuLimit: 1000
+        ramLimit: 10MB
+        storageLimit: 5MB
+        stateLimit: 512KB
+        tmpLimit: 256MiB`
     },
     batteryEnergySaverSdvRuntime: {
       name: "Battery Energy Saver - sdv-runtime / VSS 4.0",
       appName: "battery-energy-saver-sdv",
       description: "Same HVAC/seat cutoff logic as the HPC variant but corrected for sdv-runtime: HVAC path is IsAirConditioningActive (bool actuator) and all actuator writes target actuator_target instead of value",
-      cpp: `#include <iostream>
+      cpp: `/*
+ * Battery Energy Saver \u2014 sdv-runtime / VSS 4.0
+ * ===============================================
+ *
+ * WHAT THIS SERVICE DOES
+ * ----------------------
+ * Subscribes to the vehicle's State-of-Charge (SoC) via KUKSA Databroker.
+ * When SoC drops below configurable thresholds it commands actuators off:
+ *   - SoC < HVAC_OFF_THRESHOLD (default 50%) -> set IsAirConditioningActive = false
+ *   - SoC < SEAT_OFF_THRESHOLD (default 30%) -> set Seat.Row1.DriverSide.Heating = 0
+ * While the battery is low it also blocks any attempt to re-enable those actuators.
+ *
+ * ARCHITECTURE
+ * ------------
+ *
+ *   \u250C\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510
+ *   \u2502  Host machine                       \u2502
+ *   \u2502                                     \u2502
+ *   \u2502  docker run -p 55555:55555          \u2502
+ *   \u2502    ghcr.io/eclipse-autowrx/         \u2502
+ *   \u2502    sdv-runtime:latest               \u2502
+ *   \u2502         \u2502                           \u2502
+ *   \u2502         \u2502  KUKSA Databroker :55555  \u2502
+ *   \u2502         \u2502  (gRPC, VSS 4.0)          \u2502
+ *   \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253C\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518
+ *             \u2502
+ *   \u250C\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u253C\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510
+ *   \u2502  AOS HPC VM                         \u2502
+ *   \u2502         \u2502                           \u2502
+ *   \u2502  battery-energy-saver-sdv           \u2502
+ *   \u2502  (this service, deployed via        \u2502
+ *   \u2502   AosCloud onto the HPC node)       \u2502
+ *   \u2502                                     \u2502
+ *   \u2502  env: KUKSA_DATABROKER_ADDR=        \u2502
+ *   \u2502       <host-ip>:55555               \u2502
+ *   \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518
+ *
+ * SETUP
+ * -----
+ * 1. Start sdv-runtime on the host:
+ *      docker run -d -p 55555:55555 ghcr.io/eclipse-autowrx/sdv-runtime:latest
+ *
+ * 2. Find the host IP reachable from the AOS VM.
+ *    From inside the VM the Docker bridge gateway is typically 172.17.0.1,
+ *    but if the VM is on a separate NAT network use the host's LAN IP instead
+ *    (e.g. 10.x.x.x).  Confirm reachability:
+ *      nc -zv <host-ip> 55555
+ *
+ * 3. In the YAML config below, set KUKSA_DATABROKER_ADDR to that IP:
+ *      env:
+ *        - "KUKSA_DATABROKER_ADDR=<host-ip>:55555"
+ *
+ * 4. Build and deploy via AosCloud (Build -> Deploy in this UI).
+ *
+ * VERIFYING THE COMMUNICATION (Python client on the host)
+ * -------------------------------------------------------
+ * Install:  pip install kuksa-client
+ *
+ *   from kuksa_client.grpc import VSSClient, Datapoint
+ *   import time
+ *
+ *   SOC  = 'Vehicle.Powertrain.TractionBattery.StateOfCharge.Current'
+ *   RANGE= 'Vehicle.Powertrain.Range'
+ *   HVAC = 'Vehicle.Cabin.HVAC.IsAirConditioningActive'
+ *   SEAT = 'Vehicle.Cabin.Seat.Row1.DriverSide.Heating'
+ *
+ *   with VSSClient('<host-ip>', 55555) as c:
+ *       # 1. Normal charge \u2014 no cutoff
+ *       c.set_current_values({SOC: Datapoint(80.0), RANGE: Datapoint(250)})
+ *       time.sleep(1)
+ *
+ *       # 2. Drop SoC below HVAC threshold \u2014 service sets HVAC target = False
+ *       c.set_current_values({SOC: Datapoint(40.0)})
+ *       time.sleep(1)
+ *
+ *       # 3. Try to re-enable HVAC while battery is still low
+ *       c.set_target_values({HVAC: Datapoint(True)})
+ *       time.sleep(1)
+ *       # Service detects it and forces HVAC target back to False
+ *
+ *       # 4. Read back what the service wrote
+ *       tgt = c.get_target_values([HVAC, SEAT])
+ *       print(tgt[HVAC].value)   # False  (service enforced it)
+ *
+ *       # 5. Drop below seat threshold too
+ *       c.set_current_values({SOC: Datapoint(25.0)})
+ *       time.sleep(1)
+ *       tgt = c.get_target_values([HVAC, SEAT])
+ *       print(tgt[SEAT].value)   # 0  (seat heating cut)
+ *
+ * SERVICE LOGS ON THE AOS VM
+ * --------------------------
+ * Find the service PID:
+ *   cat /run/aos/runtime/<instance-id>/.pid
+ * Stream its output:
+ *   journalctl _PID=<pid> -f
+ *
+ * You should see:
+ *   Charge: 80% | Range: 250
+ *   Charge: 40% | Range: 250
+ *   [!] SoC=40% < 50%  ->  Turning HVAC off
+ *   [!] Battery low    ->  blocking HVAC re-activation   <- after step 3
+ *   [!] SoC=25% < 30%  ->  Turning Seat Heating off
+ *   [+] SoC=55%        ->  HVAC restriction lifted
+ */
+
+#include <iostream>
 #include <string>
 #include <thread>
 #include <chrono>
@@ -26546,7 +26732,7 @@ static void run(kuksa::val::v1::VAL::Stub* stub,
     for (const char* path : { HVAC_PATH, SEAT_HEAT_PATH }) {
         auto* entry = sub_req.add_entries();
         entry->set_path(path);
-        entry->set_view(kuksa::val::v1::VIEW_ACTUATOR_TARGET);
+        entry->set_view(kuksa::val::v1::VIEW_TARGET_VALUE);
         entry->add_fields(kuksa::val::v1::FIELD_ACTUATOR_TARGET);
     }
 
@@ -26658,46 +26844,63 @@ int main(int argc, char* argv[]) {
     std::cout << "Battery Energy Saver: shutdown, no signal reset needed." << std::endl;
     return 0;
 }`,
-      yaml: `publisher:
-    author: "developer@example.com"
-    company: "Example Corp"
+      yaml: `# Configuration for AosEdge Update Bundle (schemaVersion: 2)
+schemaVersion: 2
 
-build:
-    os: linux
-    arch: x86_64
-    sign_pkcs12: aos-user-sp.p12
-    symlinks: copy
+publisher:
+  author: "developer@example.com"
+  company: "Example Corp"
 
 publish:
-    url: aoscloud.io
-    service_uid: 00000000-0000-0000-0000-000000000000
-    tls_pkcs12: aos-user-sp.p12
-    version: "1.0.0"
+  tlsKey: "aos-user-sp.p12"
+  domain: "aoscloud.io"
 
-configuration:
-    cmd: /battery-energy-saver-sdv
-    workingDir: '/'
-    env:
+items:
+  - identity:
+      type: "service"
+      codename: "battery-energy-saver-sdv"
+      title: "Battery Energy Saver - sdv-runtime / VSS 4.0"
+      description: "HVAC/seat cutoff logic corrected for sdv-runtime with actuator_target writes"
+    version: "1.0.0"
+    sourceFolder: "battery-energy-saver-sdv"
+
+    images:
+      - sourceFolder: "src_x86_64"
+        archInfo:
+          architecture: "amd64"
+        workingDir: "/"
+        cmd: "/battery-energy-saver-sdv"
+        env:
+          - "KUKSA_DATABROKER_ADDR=10.189.232.240:55555"
+          - "HVAC_OFF_THRESHOLD=50.0"
+          - "SEAT_OFF_THRESHOLD=30.0"
+
+      - sourceFolder: "src_aarch64"
+        archInfo:
+          architecture: "arm64"
+        workingDir: "/"
+        cmd: "/battery-energy-saver-sdv"
+        env:
+          - "KUKSA_DATABROKER_ADDR=10.189.232.240:55555"
+          - "HVAC_OFF_THRESHOLD=50.0"
+          - "SEAT_OFF_THRESHOLD=30.0"
+
+    configuration:
+      workingDir: "/"
+      cmd: "/battery-energy-saver-sdv"
+      env:
         - "KUKSA_DATABROKER_ADDR=10.189.232.240:55555"
         - "HVAC_OFF_THRESHOLD=50.0"
         - "SEAT_OFF_THRESHOLD=30.0"
-    state:
-        filename: default_state.dat
-        required: true
-    instances:
+      instances:
         minInstances: 1
-        priority: 0
-    isResourceLimits: true
-    requestedResources:
-        cpu: 1000
-        ram: 10MB
-        storage: 5MB
-        state: 512KB
-    quotas:
-        cpu: 1000
-        mem: 10MB
-        state: 512KB
-        storage: 5MB`
+        priority: 10
+      quotas:
+        cpuLimit: 1000
+        ramLimit: 10MB
+        storageLimit: 5MB
+        stateLimit: 512KB
+        tmpLimit: 256MiB`
     }
   };
 
@@ -28508,6 +28711,7 @@ configuration:
               React2.createElement("option", { value: "kuksaReader" }, "KUKSA Reader \u2014 read vehicle signals"),
               React2.createElement("option", { value: "evRangeExtender" }, "EV Range Extender \u2014 battery management"),
               React2.createElement("option", { value: "batteryEnergySaver" }, "Battery Energy Saver \u2014 HVAC/seat cutoff"),
+              React2.createElement("option", { value: "batteryEnergySaverSdvRuntime" }, "Battery Energy Saver \u2014 sdv-runtime / VSS 4.0"),
               React2.createElement("option", { value: "signalReporter" }, "Signal Reporter \u2014 relay to dashboard")
             )
           ),
