@@ -296,7 +296,7 @@ async function main() {
                 try {
                   const tmpFile = `/tmp/service-log-${ready.id}.tar.gz`;
                   await execAsync(
-                    `curl -k --http1.1 -o ${tmpFile} ${aoscloudUrl}/api/v10/service-logs/${ready.id}/download-log-file/ ` +
+                    `curl -k --http1.1 -o ${tmpFile} ${aoscloudUrl}/api/v11/service-logs/${ready.id}/download-log-file/ ` +
                     `--cert ${certPath} --cert-type P12`,
                     { env: { ...process.env }, timeout: 30000 }
                   );
@@ -324,7 +324,7 @@ async function main() {
                 });
                 try {
                   await execAsync(
-                    `curl -k --http1.1 -X POST ${aoscloudUrl}/api/v10/service-logs/ ` +
+                    `curl -k --http1.1 -X POST ${aoscloudUrl}/api/v11/service-logs/ ` +
                     `--cert ${certPath} --cert-type P12 ` +
                     `-H "accept: application/json" -H "Content-Type: application/json" ` +
                     `-d '${payload}'`,
@@ -637,7 +637,7 @@ async function handleStopApp(data) {
 
 async function curlAosCloud(apiPath) {
   const { stdout } = await execAsync(
-    `curl -k --http1.1 ${aoscloudUrl}/api/v10/${apiPath} ` +
+    `curl -k --http1.1 ${aoscloudUrl}/api/v11/${apiPath} ` +
     `--cert ${certPath} --cert-type P12 ` +
     `-H "accept: application/json"`,
     { env: { ...process.env }, timeout: 15000 }
@@ -1041,7 +1041,7 @@ async function handleGetUnitMonitoring(data) {
       return { kit_id: instanceId, type: 'aos_get_unit_monitoring', status: 'error', message: result.message };
     }
 
-    // Real shape from /api/v10/units/<uid>/monitoring/:
+    // Real shape from /api/v11/units/<uid>/monitoring/:
     //   [ { cpu:[{value,measurementType,nodeId,...}], ram:[...], disk:[{partition,value,...}], ... },
     //     { ...secondary node... }, {} ]
     // Each metric is a *time-series array* of measurements; we want the most
@@ -1177,7 +1177,7 @@ async function handleRequestServiceLog(data) {
     });
 
     const { stdout } = await execAsync(
-      `curl -k --http1.1 -X POST ${aoscloudUrl}/api/v10/service-logs/ ` +
+      `curl -k --http1.1 -X POST ${aoscloudUrl}/api/v11/service-logs/ ` +
       `--cert ${certPath} --cert-type P12 ` +
       `-H "accept: application/json" -H "Content-Type: application/json" ` +
       `-d ${JSON.stringify(payload)}`,
