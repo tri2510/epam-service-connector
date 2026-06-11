@@ -472,6 +472,13 @@ function generateNewConfigFormat(appName, arch, oldYamlConfig) {
   const cmd = extractValue(/cmd:\s*["']?([^"'\n]+)["']?/) || `/${appName}`;
   const workingDir = extractValue(/workingDir:\s*["']?([^"'\n]+)["']?/) || '/';
 
+  // Extract identity fields: service UUID (id) or codename, title, description
+  // Supports both: id: UUID and codename: "name" formats
+  const serviceId = extractValue(/id:\s*([a-f0-9-]+)/i);
+  const codename = extractValue(/codename:\s*["']?([^"'\n]+)["']?/);
+  const title = extractValue(/title:\s*["']([^"']+)["']/) || extractValue(/title:\s*(\S+)/) || `${appName} Service`;
+  const description = extractValue(/description:\s*["']([^"']+)["']/) || `Auto-generated service from AOS Edge Toolchain`;
+
   // Support both old (requestedResources.cpu) and new (quotas.cpuLimit) formats
   const cpuLimit = extractValue(/cpu:\s*(\d+)/) ||
                    extractValue(/cpuLimit:\s*(\d+)/) ||
@@ -488,6 +495,11 @@ function generateNewConfigFormat(appName, arch, oldYamlConfig) {
   const archMap = { 'x86_64': 'amd64', 'aarch64': 'arm64' };
   const newArch = archMap[arch] || arch;
 
+  // Use id (UUID) for updating existing service, or codename for new service
+  const identityLine = serviceId
+    ? `      id: ${serviceId}`
+    : `      codename: "${codename || appName}"`;
+
   return `# Configuration for AosEdge Update Bundle (schemaVersion: 2)
 schemaVersion: 2
 
@@ -500,10 +512,10 @@ publish:
 
 items:
   - identity:
-      type: "service"
-      codename: "${appName}"
-      title: "${appName} Service"
-      description: "Auto-generated service from AOS Edge Toolchain"
+      type: service
+${identityLine}
+      title: "${title}"
+      description: "${description}"
     version: "${version}"
     sourceFolder: "${appName}"
 
