@@ -392,16 +392,23 @@ const SUPPORTED_ARCHS = {
 };
 
 function detectArch(yamlConfig) {
+  // Try new 2.x format first: archInfo.architecture
+  const newArchMatch = yamlConfig.match(/architecture:\s*['\"]?(\w+)['\"]?/);
+  if (newArchMatch) {
+    const arch = newArchMatch[1];
+    const resolved = SUPPORTED_ARCHS[arch];
+    if (resolved) return resolved;
+  }
+
+  // Fallback to old 1.x format: arch
   const archMatch = yamlConfig.match(/arch:\s*(\S+)/);
-  if (!archMatch) {
-    throw new Error('Missing "arch:" field in config.yaml. Supported values: x86_64, aarch64');
+  if (archMatch) {
+    const arch = archMatch[1];
+    const resolved = SUPPORTED_ARCHS[arch];
+    if (resolved) return resolved;
   }
-  const arch = archMatch[1];
-  const resolved = SUPPORTED_ARCHS[arch];
-  if (!resolved) {
-    throw new Error(`Unsupported architecture "${arch}" in config.yaml. Supported values: ${Object.keys(SUPPORTED_ARCHS).join(', ')}`);
-  }
-  return resolved;
+
+  throw new Error('Missing architecture field in config.yaml. Supported formats: arch: x86_64 (1.x) or archInfo.architecture: amd64 (2.x)');
 }
 
 function compilerForArch(arch) {
@@ -453,35 +460,29 @@ const buildHistory = new Map();
 
 // Generate new aos-signer 2.x config format (schemaVersion: 2)
 function generateNewConfigFormat(appName, arch, oldYamlConfig) {
-  // Parse old config to extract some values if needed
-  const oldConfig = {};
-  const lines = oldYamlConfig.split('\n');
-  let currentSection = '';
-  lines.forEach(line => {
-    const trimmed = line.trim();
-    if (trimmed && !trimmed.startsWith('#')) {
-      if (trimmed.endsWith(':')) {
-        currentSection = trimmed.slice(0, -1);
-      } else {
-        const [key, ...valueParts] = trimmed.split(':');
-        if (key && valueParts.length > 0) {
-          const value = valueParts.join(':').trim();
-          if (!oldConfig[currentSection]) oldConfig[currentSection] = {};
-          oldConfig[currentSection][key.trim()] = value;
-        }
-      }
-    }
-  });
+  // Parse values from YAML config (supports both 1.x and 2.x formats)
+  const extractValue = (pattern) => {
+    const match = oldYamlConfig.match(pattern);
+    return match ? match[1].trim() : null;
+  };
 
-  const publisher = oldConfig.publisher?.author || 'developer@example.com';
-  const company = oldConfig.publisher?.company || 'Example Corp';
-  const version = oldConfig.publish?.version || '1.0.0';
-  const cmd = oldConfig.configuration?.cmd || `/${appName}`;
-  const workingDir = oldConfig.configuration?.workingDir || '/';
-  const cpuLimit = oldConfig.configuration?.requestedResources?.cpu || '1000';
-  const ramLimit = oldConfig.configuration?.requestedResources?.ram || '10MB';
-  const storageLimit = oldConfig.configuration?.requestedResources?.storage || '5MB';
-  const stateLimit = oldConfig.configuration?.requestedResources?.state || '512KB';
+  const publisher = extractValue(/author:\s*["']?([^"'\n]+)["']?/) || 'developer@example.com';
+  const company = extractValue(/company:\s*["']?([^"'\n]+)["']?/) || 'Example Corp';
+  const version = extractValue(/version:\s*["']?([^"'\n]+)["']?/) || '1.0.0';
+  const cmd = extractValue(/cmd:\s*["']?([^"'\n]+)["']?/) || `/${appName}`;
+  const workingDir = extractValue(/workingDir:\s*["']?([^"'\n]+)["']?/) || '/';
+
+  // Support both old (requestedResources.cpu) and new (quotas.cpuLimit) formats
+  const cpuLimit = extractValue(/cpu:\s*(\d+)/) ||
+                   extractValue(/cpuLimit:\s*(\d+)/) ||
+                   extractValue(/cpu:\s*["']?(\d+)/) || '1000';
+  const ramLimit = extractValue(/ram:\s*["']?(\d+[A-Z]+)/) ||
+                  extractValue(/ramLimit:\s*["']?(\d+[A-Z]+)/) ||
+                  extractValue(/mem:\s*["']?(\d+[A-Z]+)/) || '10MB';
+  const storageLimit = extractValue(/storage:\s*["']?(\d+[A-Z]+)/) ||
+                       extractValue(/storageLimit:\s*["']?(\d+[A-Z]+)/) || '5MB';
+  const stateLimit = extractValue(/state:\s*["']?(\d+[A-Z]+)/) ||
+                    extractValue(/stateLimit:\s*["']?(\d+[A-Z]+)/) || '512KB';
 
   // Map arch names
   const archMap = { 'x86_64': 'amd64', 'aarch64': 'arm64' };
@@ -749,7 +750,7 @@ async function handleListAosCloud(data, resource) {
     let mapped;
     if (resource === 'services') {
       mapped = items.map((s) => ({
-        uuid: s.uuid,
+        uuid: s.id || s.uuid,
         title: s.title || s.name,
         description: s.description || '',
         provider: s.service_provider_title || ''
