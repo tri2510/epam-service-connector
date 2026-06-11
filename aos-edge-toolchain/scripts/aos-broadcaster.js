@@ -451,6 +451,89 @@ const crypto = require('crypto');
 const BUILD_HISTORY_MAX = 20;
 const buildHistory = new Map();
 
+// Generate new aos-signer 2.x config format (schemaVersion: 2)
+function generateNewConfigFormat(appName, arch, oldYamlConfig) {
+  // Parse old config to extract some values if needed
+  const oldConfig = {};
+  const lines = oldYamlConfig.split('\n');
+  let currentSection = '';
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#')) {
+      if (trimmed.endsWith(':')) {
+        currentSection = trimmed.slice(0, -1);
+      } else {
+        const [key, ...valueParts] = trimmed.split(':');
+        if (key && valueParts.length > 0) {
+          const value = valueParts.join(':').trim();
+          if (!oldConfig[currentSection]) oldConfig[currentSection] = {};
+          oldConfig[currentSection][key.trim()] = value;
+        }
+      }
+    }
+  });
+
+  const publisher = oldConfig.publisher?.author || 'developer@example.com';
+  const company = oldConfig.publisher?.company || 'Example Corp';
+  const version = oldConfig.publish?.version || '1.0.0';
+  const cmd = oldConfig.configuration?.cmd || `/${appName}`;
+  const workingDir = oldConfig.configuration?.workingDir || '/';
+  const cpuLimit = oldConfig.configuration?.requestedResources?.cpu || '1000';
+  const ramLimit = oldConfig.configuration?.requestedResources?.ram || '10MB';
+  const storageLimit = oldConfig.configuration?.requestedResources?.storage || '5MB';
+  const stateLimit = oldConfig.configuration?.requestedResources?.state || '512KB';
+
+  // Map arch names
+  const archMap = { 'x86_64': 'amd64', 'aarch64': 'arm64' };
+  const newArch = archMap[arch] || arch;
+
+  return `# Configuration for AosEdge Update Bundle (schemaVersion: 2)
+schemaVersion: 2
+
+publisher:
+  author: "${publisher}"
+  company: "${company}"
+
+publish:
+  tlsKey: "aos-user-sp.p12"
+
+items:
+  - identity:
+      type: "service"
+      codename: "${appName}"
+      title: "${appName} Service"
+      description: "Auto-generated service from AOS Edge Toolchain"
+    version: "${version}"
+    sourceFolder: "${appName}"
+
+    images:
+      - sourceFolder: "src_${arch}"
+        archInfo:
+          architecture: "${newArch}"
+        workingDir: "${workingDir}"
+        cmd: "${cmd}"
+
+    configuration:
+      workingDir: "${workingDir}"
+      cmd: "${cmd}"
+      instances:
+        minInstances: 1
+        priority: 10
+      quotas:
+        cpuLimit: ${parseInt(cpuLimit) || 1000}
+        ramLimit: ${ramLimit}
+        storageLimit: ${storageLimit}
+        stateLimit: ${stateLimit}
+        tmpLimit: 256MiB
+        uploadSpeedLimit: 10K
+        downloadSpeedLimit: 10K
+        uploadLimit: 10GiB
+        downloadLimit: 10GiB
+        noFileLimit: 1024
+        pidsLimit: 256
+`;
+}
+
 function emitProgress(buildId, stage, message, progress) {
   const entry = { stage, message, progress, ts: Date.now() };
   const build = buildHistory.get(buildId);
@@ -497,12 +580,12 @@ async function handleBuildDeploy(data, buildId) {
   emitProgress(buildId, 'init', `Starting build for ${appName} (build: ${buildId})`, 0);
 
   try {
-    await fs.mkdir(path.join(buildDir, 'src'), { recursive: true });
-    await fs.mkdir(path.join(buildDir, 'meta'), { recursive: true });
+    // New aos-signer 2.x format: config.yaml at root, service folder with src_<arch> structure
+    const serviceFolder = path.join(buildDir, appName);
+    const srcFolder = path.join(serviceFolder, 'src_temp');
+    await fs.mkdir(srcFolder, { recursive: true });
 
-    await fs.writeFile(path.join(buildDir, 'src/main.cpp'), cppCode);
-    await fs.writeFile(path.join(buildDir, 'meta/config.yaml'), yamlConfig);
-    await fs.writeFile(path.join(buildDir, 'meta/default_state.dat'), '');
+    await fs.writeFile(path.join(srcFolder, 'main.cpp'), cppCode);
 
     const certSrc = '/root/.aos/security/aos-user-sp.p12';
     try { await fs.copyFile(certSrc, path.join(buildDir, 'aos-user-sp.p12')); } catch (e) { /* ok */ }
@@ -512,7 +595,7 @@ async function handleBuildDeploy(data, buildId) {
     emitProgress(buildId, 'config', `Target: ${targetArch}, compiler: ${cxx}`, 10);
 
     const isGrpcProject = cppCode.includes('grpcpp') || cppCode.includes('grpc.pb.h');
-    const builtBinary = path.join(buildDir, appName);
+    const builtBinary = path.join(buildDir, `${appName}-bin`);
 
     if (isGrpcProject) {
       emitProgress(buildId, 'proto', 'Generating gRPC proto stubs...', 15);
@@ -531,7 +614,7 @@ async function handleBuildDeploy(data, buildId) {
         : '-I/opt/grpc-aarch64/include -L/opt/grpc-aarch64/lib -lgrpc++ -lprotobuf -lpthread';
       const staticFlag = targetArch === 'x86_64' ? '' : '-static';
       const compileCmd = `${cxx} -std=c++17 -O2 ${staticFlag} -I${genDir} ` +
-        `${buildDir}/src/main.cpp ` +
+        `${srcFolder}/main.cpp ` +
         `${genDir}/kuksa/val/v1/types.pb.cc ${genDir}/kuksa/val/v1/types.grpc.pb.cc ` +
         `${genDir}/kuksa/val/v1/val.pb.cc ${genDir}/kuksa/val/v1/val.grpc.pb.cc ` +
         `${grpcFlags} -o ${builtBinary}`;
@@ -539,7 +622,7 @@ async function handleBuildDeploy(data, buildId) {
       await execAsync(compileCmd, { cwd: buildDir, env: { ...process.env }, timeout: 300000 });
     } else {
       const staticFlag = '-static';
-      const compileCmd = `${cxx} ${staticFlag} -std=c++17 -O2 ${buildDir}/src/main.cpp -o ${builtBinary}`;
+      const compileCmd = `${cxx} ${staticFlag} -std=c++17 -O2 ${srcFolder}/main.cpp -o ${builtBinary}`;
       emitProgress(buildId, 'compile', 'Compiling application...', 25);
       await execAsync(compileCmd, { cwd: buildDir, timeout: 60000 });
     }
@@ -547,21 +630,33 @@ async function handleBuildDeploy(data, buildId) {
     const { stdout: fileOut } = await execAsync(`file ${builtBinary}`);
     emitProgress(buildId, 'compile', `Binary: ${fileOut.trim().split(':').pop().trim().slice(0, 80)}`, 50);
 
-    await fs.copyFile(builtBinary, path.join(buildDir, 'src', appName));
-    try { await fs.unlink(path.join(buildDir, 'src/main.cpp')); } catch (e) { /* ok */ }
+    // Create proper src_<arch> folder structure for aos-signer 2.x
+    const srcArchFolder = path.join(serviceFolder, `src_${targetArch}`);
+    await fs.mkdir(srcArchFolder, { recursive: true });
+    await fs.copyFile(builtBinary, path.join(srcArchFolder, appName));
+    await fs.rm(path.join(srcArchFolder, 'main.cpp')).catch(() => {});
+
+    // Clean up temp src folder
+    await fs.rm(srcFolder, { recursive: true, force: true });
 
     if (isGrpcProject && targetArch === 'x86_64') {
       emitProgress(buildId, 'bundle', 'Bundling dynamic libraries...', 55);
-      await bundleDynamicLibs(path.join(buildDir, 'src', appName), path.join(buildDir, 'src'));
+      await bundleDynamicLibs(path.join(srcArchFolder, appName), srcArchFolder);
     }
 
-    emitProgress(buildId, 'sign', 'Signing service package...', 60);
+    // Generate new config.yaml format at root (schemaVersion: 2)
+    const newConfig = generateNewConfigFormat(appName, targetArch, yamlConfig);
+    await fs.writeFile(path.join(buildDir, 'config.yaml'), newConfig);
+    emitProgress(buildId, 'config', 'Generated config.yaml (schemaVersion: 2)', 65);
+
+    emitProgress(buildId, 'sign', 'Signing deployment bundle...', 70);
     await execAsync('aos-signer sign', { cwd: buildDir, env: { ...process.env } });
 
-    const pkgStats = await fs.stat(path.join(buildDir, 'service.tar.gz')).catch(() => null);
-    if (!pkgStats) throw new Error('Package not created after signing');
+    // aos-signer 2.x creates batch.tar.gz instead of service.tar.gz
+    const pkgStats = await fs.stat(path.join(buildDir, 'batch.tar.gz')).catch(() => null);
+    if (!pkgStats) throw new Error('Deployment bundle not created after signing');
     const sizeMB = (pkgStats.size / (1024 * 1024)).toFixed(1);
-    emitProgress(buildId, 'sign', `Package signed: ${sizeMB} MB`, 75);
+    emitProgress(buildId, 'sign', `Deployment bundle signed: ${sizeMB} MB`, 75);
 
     emitProgress(buildId, 'upload', 'Uploading to AosCloud...', 80);
     try {
@@ -574,7 +669,7 @@ async function handleBuildDeploy(data, buildId) {
         const logSummary = (build?.logs || []).map(e => `[${e.stage}] ${e.message}`).join('\n');
         return { kit_id: instanceId, type: 'aos_build_deploy', status: 'error', buildId, appId: appName, message: logSummary };
       }
-      emitProgress(buildId, 'upload', 'Upload complete — service published to AosCloud', 100);
+      emitProgress(buildId, 'upload', 'Upload complete — deployment bundle published to AosCloud', 100);
     } catch (uploadErr) {
       const errMsg = uploadErr.stderr || uploadErr.stdout || uploadErr.message || 'Unknown upload error';
       emitProgress(buildId, 'upload', `Upload failed: ${errMsg.slice(-200)}`, -1);
